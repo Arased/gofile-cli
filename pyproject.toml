@@ -1,0 +1,11 @@
+[project]
+name = "gofilecli"
+version = "0.0.1"
+description = "Simple client for the gofile.io web API"
+authors = [
+    {name = "Thomas Hervier", email = "thomas.hervier@proton.me@"},
+]
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
