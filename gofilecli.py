@@ -4,6 +4,7 @@ gofile.io python client, provides both CLI and library functionnality.
 import logging
 import os
 import sys
+import re
 from argparse import ArgumentParser, Namespace
 
 
@@ -28,6 +29,24 @@ def _init_logger(level : int):
         logger.setLevel(logging.DEBUG)
     else:
         raise ValueError(f"{level} is not a valid verbosity level.")
+
+
+def validate_url(url_candidate : str) -> str | None:
+    """
+    Accepts a potentiel gofile.io URL and returns the associated content ID
+    if the URL is valid.
+
+    Args:
+        url_candidate (str): The string to validate and parse
+
+    Returns:
+        str | None: The content ID (if it exists)
+    """
+    gofile_pattern = re.compile(r"^https?://gofile.io/d/(?P<content_id>[a-zA-Z0-9]{6})$")
+    match = gofile_pattern.match(url_candidate)
+    if match is None:
+        return None
+    return match.group("content_id")
 
 
 def cli_download(args : Namespace):
