@@ -346,7 +346,7 @@ class API:
         """
         if self.token is None:
             logger.error("A token is needed for this operation.")
-            raise ValueError()
+            raise ValueError("A token is needed for this operation.")
         try:
             logger.info("Querying information on content ID : %s", content_id)
             query = parse.urlencode({'contentId' : content_id,
@@ -401,6 +401,64 @@ class API:
                                   code = r_data['data']['code'],
                                   children = children)
                 raise GofileAPIException(f"Content type not known {r_data['data']['type']}.")
+            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+        except (HTTPException, ConnectionError, TimeoutError) as network_error:
+            logger.error("Network error, %s.", network_error)
+            raise GofileNetworkException() from network_error
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            raise GofileAPIException() from decode_error
+        finally:
+            self.close()
+
+    def create_folder(self, parent : str, name : str) -> Folder:
+        """
+        Create a folder in a gofile hierarchy.
+
+        Args:
+            parent (str): The parent folder content id.
+            name (str): The new folder name.
+
+        Raises:
+            ValueError: If this method is called witout a token.
+            GofileAPIException: When the response could not be parsed.
+            GofileNetworkException: In case of bad return code or network related exception.
+
+        Returns:
+            Folder: Object containing the newly created folder informations.
+        """
+        if self.token is None:
+            logger.error("A token is needed for this operation.")
+            raise ValueError("A token is needed for this operation.")
+        try:
+            logger.info("Creating folder %s under folder id %s.", name, parent)
+            query = parse.urlencode({'parentFolderId' : parent,
+                                     'folderName' : name,
+                                     'token': self.token})
+            self._api_connection.request('PUT',
+                                         '/createFolder',
+                                         body = query,
+                                         headers = {'Host' : self.GOFILE_API_HOST,
+                                                    'Accept' : 'application/json',
+                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+            response = self._api_connection.getresponse()
+            if not 200 <= response.status <= 299:
+                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.debug("Data received %s", response.read())
+                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            logger.debug("Got response code %s.", response.status)
+            r_body = response.read().decode(self.ENCODING)
+            r_data = json.loads(r_body)
+            logger.debug("Data received : %s", r_data)
+            if r_data['status'] == 'ok':
+                return Folder(content_id = r_data['data']['id'],
+                              name = r_data['data']['name'],
+                              parent = r_data['data']['parentFolder'],
+                              create_time = r_data['data']['createTime'],
+                              is_owner = True,
+                              is_public = False,
+                              code = r_data['data']['code'],
+                              children = r_data['data']['childs'])
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s.", network_error)
