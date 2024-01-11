@@ -7,8 +7,11 @@ import sys
 import re
 import ssl
 import json
+from dataclasses import dataclass
+from enum import Enum
 from argparse import ArgumentParser, Namespace
 from http.client import HTTPSConnection, HTTPException
+from urllib import parse
 from collections import namedtuple
 
 
@@ -178,8 +181,7 @@ class API:
                 file_data = file.read()
             file_name = os.path.basename(file_path)
         else:
-            file_data = file_content[0]
-            file_name = file_content[1]
+            file_data, file_name = file_content
 
         boundary = "-------PYTHON-GOFILECLI-BOUNDARY"
 
@@ -235,13 +237,155 @@ class API:
             logger.error("API error, the response message could not be decoded, %s.", decode_error)
             raise GofileAPIException() from decode_error
 
+    def get_content(self, content_id : str):
+        if self.token is None:
+            logger.error("A token is needed for this operation.")
+            raise ValueError()
+        try:
+            logger.info("Querying information on content ID : %s", content_id)
+            query = parse.urlencode({'contentId' : content_id,
+                                     'token' : self.token})
+            self._api_connection.request('GET',
+                                         f'/getContent?{query}',
+                                         headers = {'Host' : self.GOFILE_API_HOST,
+                                                    'Accept' : 'application/json'})
+            response = self._api_connection.getresponse()
+            if not 200 <= response.status <= 299:
+                logger.error("HTTP error, the server replied with code %s.", response.status)
+                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            logger.debug("Got response code %s.", response.status)
+            r_body = response.read().decode(self.ENCODING)
+            r_data = json.loads(r_body)
+            logger.debug("Data received : %s", r_data)
+            if r_data['status'] == 'ok':
+                if r_data['data'] == 'not-a-folder':
+                    raise GofileAPIException(f"Content ID {content_id} is not a folder.")
+                if r_data['data']['type'] == ContentType.FOLDER.value:
+                    children = []
+                    for child in [r_data['data']['contents'][child_id] 
+                                  for child_id in r_data['data']['childs']]:
+                        if child['type'] == ContentType.FOLDER.value:
+                            children.append(Folder(content_id = child['id'],
+                                                   name = child['name'],
+                                                   parent = child['parentFolder'],
+                                                   create_time = child['createTime'],
+                                                   is_owner = r_data['data']['isOwner'],
+                                                   is_public = child['public'],
+                                                   code = child['code'],
+                                                   children = child['childs']))
+                        elif child['type'] == ContentType.FILE.value:
+                            children.append(File(content_id = child['id'],
+                                                 name = child['name'],
+                                                 parent = child['parentFolder'],
+                                                 create_time = child['createTime'],
+                                                 download_count = child['downloadCount'],
+                                                 size = child['size'],
+                                                 link = child['link'],
+                                                 md5 = child['md5'],
+                                                 mime_type = child['mimetype'],
+                                                 server = child['serverChoosen']))
+                        else:
+                            raise GofileAPIException(f"Content type not known {child['type']}.")
+                    return Folder(content_id = r_data['data']['id'],
+                                  name = r_data['data']['name'],
+                                  parent = r_data['data'].get('parentFolder', None),
+                                  create_time = r_data['data']['createTime'],
+                                  is_owner = r_data['data']['isOwner'],
+                                  is_public = r_data['data']['public'],
+                                  code = r_data['data']['code'],
+                                  children = children)
+                raise GofileAPIException(f"Content type not known {r_data['data']['type']}.")
+            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+        except (HTTPException, ConnectionError, TimeoutError) as network_error:
+            logger.error("Network error, %s.", network_error)
+            raise GofileNetworkException() from network_error
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            raise GofileAPIException() from decode_error
+        finally:
+            self.close()
+
+
 UploadResult = namedtuple("UploadResult",
                           ["code",
                            "download_page",
                            "file_id",
                            "filename",
                            "md5",
-                           "parent_folder"]) 
+                           "parent_folder"])
+
+
+class ContentType(Enum):
+    """Shortcut for gofile content types."""
+    FOLDER = "folder"
+    FILE = "file"
+
+
+@dataclass
+class Content:
+    """Represent any gofile object."""
+    content_id : str
+    name : str
+    parent : str | None
+    type : ContentType
+    create_time : int
+
+
+@dataclass(init = False)
+class File(Content):
+    """Represent a gofile file."""
+
+    def __init__(self,
+                 content_id : str,
+                 name : str,
+                 parent : str,
+                 create_time : int,
+                 download_count : int,
+                 size : int,
+                 link : str,
+                 md5 : str,
+                 mime_type : str,
+                 server : str) -> None:
+        super().__init__(content_id = content_id,
+                         name = name,
+                         parent = parent,
+                         create_time = create_time,
+                         type = ContentType.FILE)
+        self.download_count = download_count
+        self.size = size
+        self.link = link
+        self.md5 = md5
+        self.mime_type = mime_type
+        self.server = server
+
+
+@dataclass(init = False)
+class Folder(Content):
+    """
+    Represent a gofile folder.
+    When returned from API.get_content the children are Content objects but
+    their children (if the direct child is a folder) are content id strings.
+    """
+
+    def __init__(self,
+                 content_id : str,
+                 name : str,
+                 parent : str | None,
+                 create_time : int,
+                 is_owner : bool,
+                 is_public : bool,
+                 code : str,
+                 children : list[Content] | list[str]) -> None:
+        super().__init__(content_id = content_id,
+                         name = name,
+                         parent = parent,
+                         create_time = create_time,
+                         type = ContentType.FOLDER)
+        self.is_owner = is_owner
+        self.is_public = is_public
+        self.is_root = parent is None
+        self.code = code
+        self.choldren = children
 
 
 def cli_download(args : Namespace):
