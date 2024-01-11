@@ -319,6 +319,10 @@ class API:
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s.", decode_error)
             raise GofileAPIException() from decode_error
+        finally:
+            logger.debug("Closing connection to %s",
+                         self.GOFILE_UPLOAD_HOST.format(server = upload_server))
+            upload_connection.close()
 
     def get_content(self, content_id : str) -> Folder:
         """
