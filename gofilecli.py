@@ -41,7 +41,7 @@ def _init_logger(level : int):
         raise ValueError(f"{level} is not a valid verbosity level.")
 
 
-def validate_url(url_candidate : str) -> str | None:
+def parse_url(url_candidate : str) -> str | None:
     """
     Accepts a potentiel gofile.io URL and returns the associated content ID
     if the URL is valid.
@@ -52,11 +52,15 @@ def validate_url(url_candidate : str) -> str | None:
     Returns:
         str | None: The content code (if it exists).
     """
-    gofile_pattern = re.compile(r"^https?://gofile.io/d/(?P<content_id>[a-zA-Z0-9]{6})$")
-    match = gofile_pattern.match(url_candidate)
-    if match is None:
+    gofile_path_pattern = re.compile(r"^/d/(?P<content_code>[a-zA-Z0-9]{6})$")
+    url = parse.urlparse(url_candidate)
+    if url.netloc == 'gofile.io':
+        match = gofile_path_pattern.match(url.path)
+        if match is None:
+            return None
+    else:
         return None
-    return match.group("content_id")
+    return match.group("content_code")
 
 
 class GofileException(Exception):
