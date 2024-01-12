@@ -588,6 +588,53 @@ class API:
         finally:
             self.close()
 
+    def delete_content(self, *content_ids : str) -> dict[str, str]:
+        """
+        Delete the specified content ids.
+
+        Raises:
+            ValueError: If this method is called witout a token.
+            GofileAPIException: When the response could not be parsed.
+            GofileNetworkException: In case of bad return code or network related exception.
+
+        Returns:
+            dict[str, str]: Input content ids as keys and operation result for each element.
+        """
+        if self.token is None:
+            logger.error("A token is needed for this operation.")
+            raise ValueError("A token is needed for this operation.")
+        try:
+            logger.info("Deleting objects %s", content_ids)
+            query = parse.urlencode({'contentsId' : ','.join(content_ids),
+                                     'token': self.token},
+                                    quote_via = parse.quote)
+            self._api_connection.request('DELETE',
+                                         '/deleteContent',
+                                         body = query,
+                                         headers = {'Host' : self.GOFILE_API_HOST,
+                                                    'Accept' : 'application/json',
+                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+            response = self._api_connection.getresponse()
+            if not 200 <= response.status <= 299:
+                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.debug("Data received : %s", response.read())
+                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            logger.debug("Got response code %s.", response.status)
+            r_body = response.read().decode(self.ENCODING)
+            r_data = json.loads(r_body)
+            logger.debug("Data received : %s", r_data)
+            if r_data['status'] == 'ok':
+                return r_data['data']
+            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+        except (HTTPException, ConnectionError, TimeoutError) as network_error:
+            logger.error("Network error, %s.", network_error)
+            raise GofileNetworkException() from network_error
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            raise GofileAPIException() from decode_error
+        finally:
+            self.close()
+
 
 def cli_download(args : Namespace):
     """Download one or multiple gofile items"""
