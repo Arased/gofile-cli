@@ -158,6 +158,27 @@ class Folder(Content):
         self.choldren = children
 
 
+@dataclass
+class Account:
+    """Represent a gofile account"""
+    credit : int
+    currency : str
+    currency_sign : str
+    email : str
+    files_count : int
+    files_count_limit : int
+    account_id : str
+    premium_type : str
+    root_folder : str
+    statistics : dict
+    tier : str
+    token : str
+    total_30ddl_traffic : int
+    total_30ddl_traffic_limit : int
+    total_size : int
+    total_size_limit : int
+
+
 class API:
     """Wrapper for API calls."""
 
@@ -625,6 +646,66 @@ class API:
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 return r_data['data']
+            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+        except (HTTPException, ConnectionError, TimeoutError) as network_error:
+            logger.error("Network error, %s.", network_error)
+            raise GofileNetworkException() from network_error
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            raise GofileAPIException() from decode_error
+        finally:
+            self.close()
+
+    def get_account_details(self) -> Account:
+        """
+        Retrieve the current account details.
+
+        Raises:
+            ValueError: If this method is called witout a token.
+            GofileAPIException: When the response could not be parsed.
+            GofileNetworkException: In case of bad return code or network related exception.
+
+        Returns:
+            Account: Dataclass containing all the retrieved information
+        """
+        if self.token is None:
+            logger.error("A token is needed for this operation.")
+            raise ValueError("A token is needed for this operation.")
+        try:
+            logger.info("Querying account details")
+            query = parse.urlencode({'token': self.token},
+                                    quote_via = parse.quote)
+            self._api_connection.request('GET',
+                                         f'/getAccountDetails?{query}',
+                                         headers = {'Host' : self.GOFILE_API_HOST,
+                                                    'Accept' : 'application/json',
+                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+            response = self._api_connection.getresponse()
+            if not 200 <= response.status <= 299:
+                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.debug("Data received : %s", response.read())
+                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            logger.debug("Got response code %s.", response.status)
+            r_body = response.read().decode(self.ENCODING)
+            r_data = json.loads(r_body)
+            logger.debug("Data received : %s", r_data)
+            if r_data['status'] == 'ok':
+                return Account(credit = r_data['data']['credit'],
+                               currency = r_data['data']['currency'],
+                               currency_sign = r_data['data']['currencySign'],
+                               email = r_data['data']['email'],
+                               files_count = r_data['data']['filesCount'],
+                               files_count_limit = r_data['data']['filesCountLimit'],
+                               account_id = r_data['data']['id'],
+                               premium_type = r_data['data']['premiumType'],
+                               root_folder = r_data['data']['rootFolder'],
+                               statistics = r_data['data']['statistics'],
+                               tier = r_data['data']['tier'],
+                               token = r_data['data']['token'],
+                               total_30ddl_traffic = r_data['data']['total30DDLTraffic'],
+                               total_30ddl_traffic_limit = r_data['data']['total30DDLTrafficLimit'],
+                               total_size = r_data['data']['totalSize'],
+                               total_size_limit = r_data['data']['totalSizeLimit'])
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s.", network_error)
