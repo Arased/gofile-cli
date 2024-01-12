@@ -474,6 +474,70 @@ class API:
             raise GofileAPIException() from decode_error
         finally:
             self.close()
+    
+    def set_option(self, content_id : str, option : str, value : str) -> None:
+        """
+        Set an option on a specific content id to a specific value.
+        option can be one of : "public", "password", "description", "expire", "tags" or "directLink".
+        the value must then adhere to the following :
+        For "public", can be "true" or "false". The content id must be a folder.
+        For "password", must be the password. The content id must be a folder.
+        For "description", must be the description. The content id must be a folder.
+        For "expire", must be the expiration date in the form of unix timestamp. The content id must be a folder.
+        For "tags", must be a comma seperated list of tags. The content id must be a folder.
+        For "directLink", can be "true" or "false". The content id must be a file.
+
+        Args:
+            content_id (str): The content id of the item to modify.
+            option (str): The option name.
+            value (str): The new value for the option.
+
+        Raises:
+            ValueError: If this method is called witout a token.
+                        Or option is not one of the allowed values.
+            GofileAPIException: When the response could not be parsed.
+            GofileNetworkException: In case of bad return code or network related exception.
+        """
+        if self.token is None:
+            logger.error("A token is needed for this operation.")
+            raise ValueError("A token is needed for this operation.")
+        if option not in ("public", "password", "description", "expire", "tags", "directLink"):
+            logger.error("The option string provided is invalid,\n\
+                must be one of : public, password, description, expire, tags, directLink.")
+            raise ValueError("Invlid option string.")
+        try:
+            logger.info("Seting option %s to %s for item %s", option, value, content_id)
+            query = parse.urlencode({'contentId' : content_id,
+                                     'option' : option,
+                                     'value' : value,
+                                     'token': self.token},
+                                    quote_via = parse.quote)
+            self._api_connection.request('PUT',
+                                         '/setOption',
+                                         body = query,
+                                         headers = {'Host' : self.GOFILE_API_HOST,
+                                                    'Accept' : 'application/json',
+                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+            response = self._api_connection.getresponse()
+            if not 200 <= response.status <= 299:
+                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.debug("Data received %s", response.read())
+                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            logger.debug("Got response code %s.", response.status)
+            r_body = response.read().decode(self.ENCODING)
+            r_data = json.loads(r_body)
+            logger.debug("Data received : %s", r_data)
+            if r_data['status'] == 'ok':
+                return
+            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+        except (HTTPException, ConnectionError, TimeoutError) as network_error:
+            logger.error("Network error, %s.", network_error)
+            raise GofileNetworkException() from network_error
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            raise GofileAPIException() from decode_error
+        finally:
+            self.close()
 
 
 def cli_download(args : Namespace):
