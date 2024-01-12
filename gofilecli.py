@@ -211,7 +211,7 @@ class API:
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s.", response.status)
-                logger.debug("Data received %s", response.read())
+                logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             logger.debug("Got response code %s.", response.status)
             r_body = response.read().decode(self.ENCODING)
@@ -309,7 +309,7 @@ class API:
             response = upload_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s.", response.status)
-                logger.debug("Data received %s", response.read())
+                logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             logger.debug("Got response code %s.", response.status)
             response_data = json.loads(response.read().decode(self.ENCODING))
@@ -363,7 +363,7 @@ class API:
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s.", response.status)
-                logger.debug("Data received %s", response.read())
+                logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             logger.debug("Got response code %s.", response.status)
             r_body = response.read().decode(self.ENCODING)
@@ -450,7 +450,7 @@ class API:
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s.", response.status)
-                logger.debug("Data received %s", response.read())
+                logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             logger.debug("Got response code %s.", response.status)
             r_body = response.read().decode(self.ENCODING)
@@ -521,7 +521,7 @@ class API:
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s.", response.status)
-                logger.debug("Data received %s", response.read())
+                logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             logger.debug("Got response code %s.", response.status)
             r_body = response.read().decode(self.ENCODING)
