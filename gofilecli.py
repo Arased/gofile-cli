@@ -43,7 +43,7 @@ def _init_logger(level : int):
 
 def parse_url(url_candidate : str) -> str | None:
     """
-    Accepts a potentiel gofile.io URL and returns the associated content ID
+    Accepts a potential gofile.io URL and returns the associated content ID
     if the URL is valid.
 
     Args:
@@ -53,7 +53,10 @@ def parse_url(url_candidate : str) -> str | None:
         str | None: The content code (if it exists).
     """
     gofile_path_pattern = re.compile(r"^/d/(?P<content_code>[a-zA-Z0-9]{6})$")
-    url = parse.urlparse(url_candidate)
+    try:
+        url = parse.urlparse(url_candidate)
+    except ValueError:
+        return None
     if url.netloc == 'gofile.io':
         match = gofile_path_pattern.match(url.path)
         if match is None:
@@ -458,8 +461,8 @@ class API:
                               name = r_data['data']['name'],
                               parent = r_data['data']['parentFolder'],
                               create_time = r_data['data']['createTime'],
-                              is_owner = True,
-                              is_public = False,
+                              is_owner = True, # By definition
+                              is_public = False, # Default setting
                               code = r_data['data']['code'],
                               children = r_data['data']['childs'])
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
