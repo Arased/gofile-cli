@@ -254,7 +254,7 @@ class API:
     def upload_file(self,
                     file_path : str | None = None,
                     file_content : tuple[bytes, str] | None = None,
-                    folder_id : str | None = None,
+                    folder : str | Folder | None = None,
                     upload_server : str | None = None) -> UploadResult:
         """
         Upload the provided file to the chosen destination
@@ -267,10 +267,11 @@ class API:
 
         Args:
             file_path (str | None, optional): Path for the file to upload (exclusive with file_content).
-                                              Defaults to None
+                Defaults to None
             file_content (tuple[bytes, str] | None, optional): Content of the file and filename (exclusive with file_path).
-                                                               Defaults to None
-            folder_id (str | None, optional): ID of the gofile destination folder. Defaults to None
+                Defaults to None
+            folder (str | Folder | None, optional): ID of the gofile destination folder or Folder object.
+                Defaults to None
             upload_server (str | None, optional): Name of the upload server to use. Defaults to None
 
         Raises:
@@ -281,9 +282,9 @@ class API:
         Returns:
             UploadResult: Named tuple with "code", "download_page", "file_id", "filename", "md5", "parent_folder"
         """
-        if folder_id is not None and self.token is None:
+        if folder is not None and self.token is None:
             logger.warning("Unable to use the provided folderId, token is needed")
-            folder_id = None
+            folder = None
         if file_path is not None and file_content is not None:
             logger.error("Ambiguous arguments file_path and file_content are mutually exclusive")
             raise ValueError("Both file_path and file_content are present when only one is needed")
@@ -297,6 +298,8 @@ class API:
             file_name = os.path.basename(file_path)
         else:
             file_data, file_name = file_content
+        if folder is not None and isinstance(folder, Folder):
+            folder = folder.content_id
 
         boundary = "-------PYTHON-GOFILECLI-BOUNDARY"
 
@@ -314,11 +317,13 @@ class API:
             formdata += 'Content-Type: application/octet-stream\r\n\r\n'
             return formdata.encode(self.ENCODING) + file_data + f"\r\n--{boundary}--\r\n".encode(self.ENCODING)
 
-        body = generate_formdata(self.token, folder_id, file_data, file_name, boundary)
+        body = generate_formdata(self.token, folder, file_data, file_name, boundary)
 
         try:
             if upload_server is None:
                 upload_server = self.get_upload_server()
+            if folder is not None:
+                logger.info("Uploading to folder %s", folder)
             logger.info("Starting upload of %s bytes to %s",
                         len(body),
                         self.GOFILE_UPLOAD_HOST.format(server = upload_server))
@@ -380,6 +385,7 @@ class API:
             logger.info("Querying information on content ID : %s", content_id)
             query = parse.urlencode({'contentId' : content_id,
                                      'token' : self.token})
+            logger.debug("Sending query %s", query)
             self._api_connection.request('GET',
                                          f'/getContent?{query}',
                                          headers = {'Host' : self.GOFILE_API_HOST,
@@ -441,12 +447,12 @@ class API:
         finally:
             self.close()
 
-    def create_folder(self, parent : str, name : str) -> Folder:
+    def create_folder(self, parent : str | Folder, name : str) -> Folder:
         """
         Create a folder in a gofile hierarchy
 
         Args:
-            parent (str): The parent folder content id
+            parent (str | Folder): The parent folder content id or Folder object
             name (str): The new folder name
 
         Raises:
@@ -460,17 +466,20 @@ class API:
         if self.token is None:
             logger.error("A token is needed for this operation")
             raise ValueError("A token is needed for this operation")
+        if isinstance(parent, Folder):
+            parent = parent.content_id
         try:
             logger.info("Creating folder %s under folder id %s", name, parent)
-            query = parse.urlencode({'parentFolderId' : parent,
-                                     'folderName' : name,
-                                     'token': self.token})
+            query = json.dumps({'parentFolderId' : parent,
+                                'folderName' : name,
+                                'token': self.token})
+            logger.debug("Sending query %s", query)
             self._api_connection.request('PUT',
                                          '/createFolder',
                                          body = query,
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json',
-                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+                                                    'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s", response.status)
@@ -499,7 +508,7 @@ class API:
         finally:
             self.close()
 
-    def set_option(self, content_id : str, option : str, value : str) -> None:
+    def set_option(self, content : str | Content, option : str, value : str) -> None:
         """
         Set an option on a specific content id to a specific value
         option can be one of : "public", "password", "description", "expire", "tags" or "directLink"
@@ -512,7 +521,7 @@ class API:
         For "directLink", can be "true" or "false". The content id must be a file
 
         Args:
-            content_id (str): The content id of the item to modify
+            content (str | Content): The content id or the Content object of the item to modify
             option (str): The option name
             value (str): The new value for the option
 
@@ -529,19 +538,21 @@ class API:
             logger.error("The option string provided is invalid,\n\
                 must be one of : public, password, description, expire, tags, directLink")
             raise ValueError("Invlid option string")
+        if isinstance(content, Content):
+            content = content.content_id
         try:
-            logger.info("Seting option %s to %s for item %s", option, value, content_id)
-            query = parse.urlencode({'contentId' : content_id,
-                                     'option' : option,
-                                     'value' : value,
-                                     'token': self.token},
-                                    quote_via = parse.quote)
+            logger.info("Seting option %s to %s for item %s", option, value, content)
+            query = json.dumps({'contentId' : content,
+                                'option' : option,
+                                'value' : value,
+                                'token': self.token})
+            logger.debug("Sending query %s", query)
             self._api_connection.request('PUT',
                                          '/setOption',
                                          body = query,
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json',
-                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+                                                    'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s", response.status)
@@ -563,13 +574,13 @@ class API:
         finally:
             self.close()
 
-    def copy_content(self, destination_id : str, *source_ids : str) -> None:
+    def copy_content(self, destination : str | Folder, *sources : str | Content) -> None:
         """
         Copy content to a different folder
 
         Args:
-            destination_id (str): The destination folder id
-            source_ids (str): One or more file ids to copy
+            destination (str | Folder): The destination folder id or Folder object
+            sources (str | Content): One or more file ids or Content objects to copy 
 
         Raises:
             ValueError: If this method is called witout a token
@@ -579,18 +590,22 @@ class API:
         if self.token is None:
             logger.error("A token is needed for this operation")
             raise ValueError("A token is needed for this operation")
+        if isinstance(destination, Folder):
+            destination = destination.content_id
+        sources = (source.content_id if isinstance(source, Content) else source
+                   for source in sources)
         try:
-            logger.info("Copying objects %s to %s", source_ids, destination_id)
-            query = parse.urlencode({'folderIdDest' : destination_id,
-                                     'contentsId' : ','.join(source_ids),
-                                     'token': self.token},
-                                    quote_via = parse.quote)
+            logger.info("Copying objects %s to %s", sources, destination)
+            query = json.dumps({'folderIdDest' : destination,
+                                'contentsId' : ','.join(sources),
+                                'token': self.token})
+            logger.debug("Sending query %s", query)
             self._api_connection.request('PUT',
                                          '/copyContent',
                                          body = query,
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json',
-                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+                                                    'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s", response.status)
@@ -612,10 +627,12 @@ class API:
         finally:
             self.close()
 
-    def delete_content(self, *content_ids : str) -> dict[str, str]:
+    def delete_content(self, *contents : str | Content) -> dict[str, str]:
         """
         Delete the specified content ids
 
+        Args:
+            contents (str | Content): Content ids or Content objects to delete
         Raises:
             ValueError: If this method is called witout a token
             GofileAPIException: When the response could not be parsed
@@ -627,17 +644,19 @@ class API:
         if self.token is None:
             logger.error("A token is needed for this operation")
             raise ValueError("A token is needed for this operation")
+        contents = (content.content_id if isinstance(content, Content) else content
+                   for content in contents)
         try:
-            logger.info("Deleting objects %s", content_ids)
-            query = parse.urlencode({'contentsId' : ','.join(content_ids),
-                                     'token': self.token},
-                                    quote_via = parse.quote)
+            logger.info("Deleting objects %s", contents)
+            query = json.dumps({'contentsId' : ','.join(contents),
+                                'token': self.token})
+            logger.debug("Sending query %s", query)
             self._api_connection.request('DELETE',
                                          '/deleteContent',
                                          body = query,
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json',
-                                                    'Content-Type' : "application/x-www-form-urlencoded"})
+                                                    'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s", response.status)
@@ -748,7 +767,7 @@ class Helper:
         logger.info("Initializing root folder hierarchy")
         self.init_hierarchy(self.root)
 
-    def init_hierarchy(self, folder :Folder) -> None:
+    def init_hierarchy(self, folder : Folder) -> None:
         """
         Populate the children of a folder recursively
 
@@ -798,7 +817,7 @@ class Helper:
             logger.debug("Initiating connection to %s", host)
             connection = HTTPSConnection(host)
             connection.request("GET",
-                            parse.urlparse(file.link).path,
+                                parse.urlparse(file.link).path,
                                 headers = {'Host' : host,
                                            'Cookie' : f'accountToken={self.api.token}'})
             response = connection.getresponse()
