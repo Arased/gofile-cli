@@ -184,6 +184,7 @@ class API:
 
     GOFILE_API_HOST = 'api.gofile.io'
     GOFILE_UPLOAD_HOST = '{server}.gofile.io'
+    GOFILE_DOWNLOAD_HOST = GOFILE_UPLOAD_HOST
 
     ENCODING = 'utf-8'
 
@@ -766,6 +767,66 @@ class Helper:
         for child in folder.children:
             if child.type == ContentType.FOLDER:
                 self.init_hierarchy(child)
+
+    def download(self,
+                 file : File,
+                 destination : str | os.PathLike,
+                 overwrite : bool = True) -> None:
+        """
+        Download a file to local storage.
+
+        Args:
+            file (File): The file object to download.
+            destination (str | os.PathLike): Local path to destination file or folder.
+            overwrite (bool, optional): Overwrite if file already exists. Defaults to True.
+
+        Raises:
+            FileExistsError: If file already exists and overwrite is set to False.
+            GofileNetworkException: In case of natwork error.
+            OSError: If the data could not be written to the local storage.
+        """
+        if os.path.isdir(destination):
+            destination = os.path.join(destination, file.name)
+        if os.path.isfile(destination) and not overwrite:
+            logger.error("Destination file %s already exists, and overwrite is False", destination)
+            raise FileExistsError("Destination already exists")
+        os.makedirs(os.path.dirname(destination), exist_ok = True)
+        try:
+            host = API.GOFILE_DOWNLOAD_HOST.format(server = file.server)
+            logger.debug("Initiating connection to %s", host)
+            connection = HTTPSConnection(host)
+            connection.request("GET",
+                            parse.urlparse(file.link).path,
+                                headers = {'Host' : host,
+                                           'Cookie' : f'accountToken={self.api.token}'})
+            response = connection.getresponse()
+            if not 200 <= response.status <= 299:
+                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.debug("Data received : %s", response.read())
+                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            with open(destination, "wb") as dest_file:
+                size = int(response.getheader("Content-Length"))
+                logger.debug("Downloading %s bytes to %s", size, os.path.basename(destination))
+                if size < 1000000:
+                    buffer = bytearray(size)
+                else:
+                    buffer = bytearray(size // 100)
+                    written = 0
+                while written < size:
+                    n_read = response.readinto(buffer)
+                    n_written = dest_file.write(buffer)
+                    if n_read > n_written:
+                        logger.error("Unable to write to file %s", destination)
+                        raise OSError("Unable to write to file")
+                    written += n_written
+                    if 0 < size - written < len(buffer):
+                        buffer = bytearray(size - written)
+        except (HTTPException, ConnectionError, TimeoutError) as network_error:
+            logger.error("Network error, %s.", network_error)
+            raise GofileNetworkException() from network_error
+        finally:
+            logger.debug("Closing connection to %s", host)
+            connection.close()
 
 
 def cli_download(args : Namespace):
