@@ -1,5 +1,5 @@
 """
-gofile.io python client, provides both CLI and library functionnality.
+gofile.io python client, provides both CLI and library functionnality
 """
 import logging
 import os
@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 
 def _init_logger(level : int):
     """
-    Initialize the module logger for CLI.
+    Initialize the module logger for CLI
 
     Args:
-        level (int): Level of verbosity between 0 and 2 (inclusive).
-                     Maps in order to WARNING, INFO, DEBUG.
-                     Integers > 2 behave identically to 2.
+        level (int): Level of verbosity between 0 and 2 (inclusive)
+                     Maps in order to WARNING, INFO, DEBUG
+                     Integers > 2 behave identically to 2
 
     Raises:
-        ValueError: If a negative number was provided.
+        ValueError: If a negative number was provided
     """
     logging.basicConfig()
     if level == 0:
@@ -38,19 +38,19 @@ def _init_logger(level : int):
     elif level >= 2:
         logger.setLevel(logging.DEBUG)
     else:
-        raise ValueError(f"{level} is not a valid verbosity level.")
+        raise ValueError(f"{level} is not a valid verbosity level")
 
 
 def parse_url(url_candidate : str) -> str | None:
     """
     Accepts a potential gofile.io URL and returns the associated content ID
-    if the URL is valid.
+    if the URL is valid
 
     Args:
-        url_candidate (str): The string to validate and parse.
+        url_candidate (str): The string to validate and parse
 
     Returns:
-        str | None: The content code (if it exists).
+        str | None: The content code (if it exists)
     """
     gofile_path_pattern = re.compile(r"^/d/(?P<content_code>[a-zA-Z0-9]{6})$")
     try:
@@ -86,14 +86,14 @@ UploadResult = namedtuple("UploadResult",
 
 
 class ContentType(Enum):
-    """Shortcut for gofile content types."""
+    """Shortcut for gofile content types"""
     FOLDER = "folder"
     FILE = "file"
 
 
 @dataclass
 class Content:
-    """Represent any gofile object."""
+    """Represent any gofile object"""
     content_id : str
     name : str
     parent : str | None
@@ -103,7 +103,7 @@ class Content:
 
 @dataclass(init = False)
 class File(Content):
-    """Represent a gofile file."""
+    """Represent a gofile file"""
 
     def __init__(self,
                  content_id : str,
@@ -132,9 +132,9 @@ class File(Content):
 @dataclass(init = False)
 class Folder(Content):
     """
-    Represent a gofile folder.
+    Represent a gofile folder
     When returned from API.get_content the children are Content objects but
-    their children (if the direct child is a folder) are content id strings.
+    their children (if the direct child is a folder) are content id strings
     """
 
     def __init__(self,
@@ -180,7 +180,7 @@ class Account:
 
 
 class API:
-    """Wrapper for API calls."""
+    """Wrapper for API calls"""
 
     GOFILE_API_HOST = 'api.gofile.io'
     GOFILE_UPLOAD_HOST = '{server}.gofile.io'
@@ -192,15 +192,15 @@ class API:
                  token : str | None = None,
                  ssl_context : ssl.SSLContext | None = None) -> None:
         """
-        Create an API wrapper.
+        Create an API wrapper
 
         Args:
-            access_token (str | None, optional): The account token to use for API calls that require it. Defaults to None.
-            ssl_context (ssl.SSLContext | None, optional): Optional SSL context to use for the connections. Defaults to None.
+            access_token (str | None, optional): The account token to use for API calls that require it. Defaults to None
+            ssl_context (ssl.SSLContext | None, optional): Optional SSL context to use for the connections. Defaults to None
         """
         self.token : str = token
         if ssl_context is not None:
-            logger.warning("Using user provided SSL context.")
+            logger.warning("Using user provided SSL context")
             self._ssl_context = ssl_context
         else:
             self._ssl_context = ssl.create_default_context()
@@ -208,34 +208,34 @@ class API:
                                                context = self._ssl_context)
 
     def close(self) -> None:
-        """Close the underlying connections."""
+        """Close the underlying connections"""
         logger.debug("Closing connection to %s", self.GOFILE_API_HOST)
         self._api_connection.close()
 
     def get_upload_server(self) -> str:
         """
-        Ask the API for the best server available for file uploading.
-        Wrapper for '/getServer'.
+        Ask the API for the best server available for file uploading
+        Wrapper for '/getServer'
 
         Returns:
-            str: The name of the best server (for example : 'store1').
+            str: The name of the best server (for example : 'store1')
 
         Raises:
-            GofileNetworkException: In case of bad return code or network related exception.
-            GofileAPIException: In case of bad API status or data related exception.
+            GofileNetworkException: In case of bad return code or network related exception
+            GofileAPIException: In case of bad API status or data related exception
         """
         try:
-            logger.info("Querying the best upload server available.")
+            logger.info("Querying the best upload server available")
             self._api_connection.request('GET',
                                          '/getServer',
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json'})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
@@ -243,10 +243,10 @@ class API:
                 return r_data['data']['server']
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
@@ -257,37 +257,39 @@ class API:
                     folder_id : str | None = None,
                     upload_server : str | None = None) -> UploadResult:
         """
-        Upload the provided file to the chosen destination.
+        Upload the provided file to the chosen destination
         The file to upload can be read from a path,
-        or the binary content can be supplied directly with a filename.
-        If no gofile destination folder is provided, a new one will be created.
-        If no upload server is chosen, one will be selected automatically.
-        Without a token, the file will be uploaded anonymously to a guest account.
+        or the binary content can be supplied directly with a filename
+        If no gofile destination folder is provided, a new one will be created
+        If no upload server is chosen, one will be selected automatically
+        Without a token, the file will be uploaded anonymously to a guest account
         Wrapper for '/uploadFile'
 
         Args:
-            file_path (str | None, optional): Path for the file to upload (exclusive with file_content). Defaults to None.
-            file_content (tuple[bytes, str] | None, optional): Content of the file and filename (exclusive with file_path). Defaults to None.
-            folder_id (str | None, optional): ID of the gofile destination folder. Defaults to None.
-            upload_server (str | None, optional): Name of the upload server to use. Defaults to None.
+            file_path (str | None, optional): Path for the file to upload (exclusive with file_content).
+                                              Defaults to None
+            file_content (tuple[bytes, str] | None, optional): Content of the file and filename (exclusive with file_path).
+                                                               Defaults to None
+            folder_id (str | None, optional): ID of the gofile destination folder. Defaults to None
+            upload_server (str | None, optional): Name of the upload server to use. Defaults to None
 
         Raises:
-            ValueError: When both or none of file_data and file_path are given.
-            GofileNetworkException: In case of bad return code or network related exception.
-            GofileAPIException: In case of bad API status or data related exception.
+            ValueError: When both or none of file_data and file_path are given
+            GofileNetworkException: In case of bad return code or network related exception
+            GofileAPIException: In case of bad API status or data related exception
 
         Returns:
             UploadResult: Named tuple with "code", "download_page", "file_id", "filename", "md5", "parent_folder"
         """
         if folder_id is not None and self.token is None:
-            logger.warning("Unable to use the provided folderId, token is needed.")
+            logger.warning("Unable to use the provided folderId, token is needed")
             folder_id = None
         if file_path is not None and file_content is not None:
-            logger.error("Ambiguous arguments file_path and file_content are mutually exclusive.")
-            raise ValueError("Both file_path and file_content are present when only one is needed.")
+            logger.error("Ambiguous arguments file_path and file_content are mutually exclusive")
+            raise ValueError("Both file_path and file_content are present when only one is needed")
         if file_path is None and file_content is None:
-            logger.error("At least one of fil_path or file_content must be given.")
-            raise ValueError("At least one of fil_path or file_content must be given.")
+            logger.error("At least one of fil_path or file_content must be given")
+            raise ValueError("At least one of fil_path or file_content must be given")
         if file_path is not None:
             logger.info("Reading file %s", file_path)
             with open(file_path, 'rb') as file:
@@ -317,7 +319,7 @@ class API:
         try:
             if upload_server is None:
                 upload_server = self.get_upload_server()
-            logger.info("Starting upload of %s bytes to %s.",
+            logger.info("Starting upload of %s bytes to %s",
                         len(body),
                         self.GOFILE_UPLOAD_HOST.format(server = upload_server))
             upload_connection = HTTPSConnection(self.GOFILE_UPLOAD_HOST.format(server = upload_server),
@@ -330,10 +332,10 @@ class API:
                                        'Content-Type' : f"multipart/form-data; boundary={boundary}"})
             response = upload_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             response_data = json.loads(response.read().decode(self.ENCODING))
             logger.debug("Data received : %s", response_data)
             if response_data['status'] == 'ok':
@@ -345,10 +347,10 @@ class API:
                                     response_data['data']['parentFolder'])
             raise GofileAPIException(f"API status not ok : {response_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             logger.debug("Closing connection to %s",
@@ -357,23 +359,23 @@ class API:
 
     def get_content(self, content_id : str) -> Folder:
         """
-        Get content information on the content id provided.
-        If the content id does not point to a folder an exception is raised.
+        Get content information on the content id provided
+        If the content id does not point to a folder an exception is raised
 
         Args:
-            content_id (str): The content id string or code pointing to a gofile folder.
+            content_id (str): The content id string or code pointing to a gofile folder
 
         Raises:
-            ValueError: If this method is called witout a token.
-            GofileAPIException: When the response could not be parsed or the content was not a folder.
-            GofileNetworkException: In case of bad return code or network related exception.
+            ValueError: If this method is called witout a token
+            GofileAPIException: When the response could not be parsed or the content was not a folder
+            GofileNetworkException: In case of bad return code or network related exception
 
         Returns:
-            Folder: Object describing the content id and its children.
+            Folder: Object describing the content id and its children
         """
         if self.token is None:
-            logger.error("A token is needed for this operation.")
-            raise ValueError("A token is needed for this operation.")
+            logger.error("A token is needed for this operation")
+            raise ValueError("A token is needed for this operation")
         try:
             logger.info("Querying information on content ID : %s", content_id)
             query = parse.urlencode({'contentId' : content_id,
@@ -384,16 +386,16 @@ class API:
                                                     'Accept' : 'application/json'})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 if r_data['data'] == 'not-a-folder':
-                    raise GofileAPIException(f"Content ID {content_id} is not a folder.")
+                    raise GofileAPIException(f"Content ID {content_id} is not a folder")
                 if r_data['data']['type'] == ContentType.FOLDER.value:
                     children = []
                     for child in [r_data['data']['contents'][child_id]
@@ -419,7 +421,7 @@ class API:
                                                  mime_type = child['mimetype'],
                                                  server = child['serverChoosen']))
                         else:
-                            raise GofileAPIException(f"Content type not known {child['type']}.")
+                            raise GofileAPIException(f"Content type not known {child['type']}")
                     return Folder(content_id = r_data['data']['id'],
                                   name = r_data['data']['name'],
                                   parent = r_data['data'].get('parentFolder', None),
@@ -428,38 +430,38 @@ class API:
                                   is_public = r_data['data']['public'],
                                   code = r_data['data']['code'],
                                   children = children)
-                raise GofileAPIException(f"Content type not known {r_data['data']['type']}.")
+                raise GofileAPIException(f"Content type not known {r_data['data']['type']}")
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
 
     def create_folder(self, parent : str, name : str) -> Folder:
         """
-        Create a folder in a gofile hierarchy.
+        Create a folder in a gofile hierarchy
 
         Args:
-            parent (str): The parent folder content id.
-            name (str): The new folder name.
+            parent (str): The parent folder content id
+            name (str): The new folder name
 
         Raises:
-            ValueError: If this method is called witout a token.
-            GofileAPIException: When the response could not be parsed.
-            GofileNetworkException: In case of bad return code or network related exception.
+            ValueError: If this method is called witout a token
+            GofileAPIException: When the response could not be parsed
+            GofileNetworkException: In case of bad return code or network related exception
 
         Returns:
-            Folder: Object containing the newly created folder informations.
+            Folder: Object containing the newly created folder informations
         """
         if self.token is None:
-            logger.error("A token is needed for this operation.")
-            raise ValueError("A token is needed for this operation.")
+            logger.error("A token is needed for this operation")
+            raise ValueError("A token is needed for this operation")
         try:
-            logger.info("Creating folder %s under folder id %s.", name, parent)
+            logger.info("Creating folder %s under folder id %s", name, parent)
             query = parse.urlencode({'parentFolderId' : parent,
                                      'folderName' : name,
                                      'token': self.token})
@@ -471,10 +473,10 @@ class API:
                                                     'Content-Type' : "application/x-www-form-urlencoded"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
@@ -489,44 +491,44 @@ class API:
                               children = r_data['data']['childs'])
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
 
     def set_option(self, content_id : str, option : str, value : str) -> None:
         """
-        Set an option on a specific content id to a specific value.
-        option can be one of : "public", "password", "description", "expire", "tags" or "directLink".
+        Set an option on a specific content id to a specific value
+        option can be one of : "public", "password", "description", "expire", "tags" or "directLink"
         the value must then adhere to the following :
-        For "public", can be "true" or "false". The content id must be a folder.
-        For "password", must be the password. The content id must be a folder.
-        For "description", must be the description. The content id must be a folder.
-        For "expire", must be the expiration date in the form of unix timestamp. The content id must be a folder.
-        For "tags", must be a comma seperated list of tags. The content id must be a folder.
-        For "directLink", can be "true" or "false". The content id must be a file.
+        For "public", can be "true" or "false". The content id must be a folder
+        For "password", must be the password. The content id must be a folder
+        For "description", must be the description. The content id must be a folder
+        For "expire", must be the expiration date in the form of unix timestamp. The content id must be a folder
+        For "tags", must be a comma seperated list of tags. The content id must be a folder
+        For "directLink", can be "true" or "false". The content id must be a file
 
         Args:
-            content_id (str): The content id of the item to modify.
-            option (str): The option name.
-            value (str): The new value for the option.
+            content_id (str): The content id of the item to modify
+            option (str): The option name
+            value (str): The new value for the option
 
         Raises:
-            ValueError: If this method is called witout a token.
-                        Or option is not one of the allowed values.
-            GofileAPIException: When the response could not be parsed.
-            GofileNetworkException: In case of bad return code or network related exception.
+            ValueError: If this method is called witout a token
+                        Or option is not one of the allowed values
+            GofileAPIException: When the response could not be parsed
+            GofileNetworkException: In case of bad return code or network related exception
         """
         if self.token is None:
-            logger.error("A token is needed for this operation.")
-            raise ValueError("A token is needed for this operation.")
+            logger.error("A token is needed for this operation")
+            raise ValueError("A token is needed for this operation")
         if option not in ("public", "password", "description", "expire", "tags", "directLink"):
             logger.error("The option string provided is invalid,\n\
-                must be one of : public, password, description, expire, tags, directLink.")
-            raise ValueError("Invlid option string.")
+                must be one of : public, password, description, expire, tags, directLink")
+            raise ValueError("Invlid option string")
         try:
             logger.info("Seting option %s to %s for item %s", option, value, content_id)
             query = parse.urlencode({'contentId' : content_id,
@@ -542,10 +544,10 @@ class API:
                                                     'Content-Type' : "application/x-www-form-urlencoded"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
@@ -553,30 +555,30 @@ class API:
                 return
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
 
     def copy_content(self, destination_id : str, *source_ids : str) -> None:
         """
-        Copy content to a different folder.
+        Copy content to a different folder
 
         Args:
-            destination_id (str): The destination folder id.
-            source_ids (str): One or more file ids to copy.
+            destination_id (str): The destination folder id
+            source_ids (str): One or more file ids to copy
 
         Raises:
-            ValueError: If this method is called witout a token.
-            GofileAPIException: When the response could not be parsed.
-            GofileNetworkException: In case of bad return code or network related exception.
+            ValueError: If this method is called witout a token
+            GofileAPIException: When the response could not be parsed
+            GofileNetworkException: In case of bad return code or network related exception
         """
         if self.token is None:
-            logger.error("A token is needed for this operation.")
-            raise ValueError("A token is needed for this operation.")
+            logger.error("A token is needed for this operation")
+            raise ValueError("A token is needed for this operation")
         try:
             logger.info("Copying objects %s to %s", source_ids, destination_id)
             query = parse.urlencode({'folderIdDest' : destination_id,
@@ -591,10 +593,10 @@ class API:
                                                     'Content-Type' : "application/x-www-form-urlencoded"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
@@ -602,29 +604,29 @@ class API:
                 return
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
 
     def delete_content(self, *content_ids : str) -> dict[str, str]:
         """
-        Delete the specified content ids.
+        Delete the specified content ids
 
         Raises:
-            ValueError: If this method is called witout a token.
-            GofileAPIException: When the response could not be parsed.
-            GofileNetworkException: In case of bad return code or network related exception.
+            ValueError: If this method is called witout a token
+            GofileAPIException: When the response could not be parsed
+            GofileNetworkException: In case of bad return code or network related exception
 
         Returns:
-            dict[str, str]: Input content ids as keys and operation result for each element.
+            dict[str, str]: Input content ids as keys and operation result for each element
         """
         if self.token is None:
-            logger.error("A token is needed for this operation.")
-            raise ValueError("A token is needed for this operation.")
+            logger.error("A token is needed for this operation")
+            raise ValueError("A token is needed for this operation")
         try:
             logger.info("Deleting objects %s", content_ids)
             query = parse.urlencode({'contentsId' : ','.join(content_ids),
@@ -638,10 +640,10 @@ class API:
                                                     'Content-Type' : "application/x-www-form-urlencoded"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
@@ -649,29 +651,29 @@ class API:
                 return r_data['data']
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
 
     def get_account_details(self) -> Account:
         """
-        Retrieve the current account details.
+        Retrieve the current account details
 
         Raises:
-            ValueError: If this method is called witout a token.
-            GofileAPIException: When the response could not be parsed.
-            GofileNetworkException: In case of bad return code or network related exception.
+            ValueError: If this method is called witout a token
+            GofileAPIException: When the response could not be parsed
+            GofileNetworkException: In case of bad return code or network related exception
 
         Returns:
             Account: Dataclass containing all the retrieved information
         """
         if self.token is None:
-            logger.error("A token is needed for this operation.")
-            raise ValueError("A token is needed for this operation.")
+            logger.error("A token is needed for this operation")
+            raise ValueError("A token is needed for this operation")
         try:
             logger.info("Querying account details")
             query = parse.urlencode({'token': self.token},
@@ -683,10 +685,10 @@ class API:
                                                     'Content-Type' : "application/x-www-form-urlencoded"})
             response = self._api_connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            logger.debug("Got response code %s.", response.status)
+            logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
             logger.debug("Data received : %s", r_data)
@@ -709,37 +711,37 @@ class API:
                                total_size_limit = r_data['data']['totalSizeLimit'])
             raise GofileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            logger.error("API error, the response message could not be decoded, %s.", decode_error)
+            logger.error("API error, the response message could not be decoded, %s", decode_error)
             raise GofileAPIException() from decode_error
         finally:
             self.close()
 
 
 class Helper:
-    """Implement higher level functions than the raw API."""
+    """Implement higher level functions than the raw API"""
 
     def __init__(self, api : API) -> None:
         self.api : API = api
         if self.api.token is None:
-            logger.warning("The api object does not have a token. functionnality will be limited.")
+            logger.warning("The api object does not have a token. functionnality will be limited")
         self.account : Account = None
         self.root : Folder = None
 
     def init_account(self) -> None:
         """Query the account details. API token is required"""
         if self.api.token is None:
-            logger.error("Unable to complete the operation, an API token is needed.")
-            raise ValueError("An API token is needed for this operation.")
+            logger.error("Unable to complete the operation, an API token is needed")
+            raise ValueError("An API token is needed for this operation")
         self.account = self.api.get_account_details()
 
     def init_root_folder(self) -> None:
         """Query the folder structure recursively. API token is required"""
         if self.api.token is None:
-            logger.error("Unable to complete the operation, an API token is needed.")
-            raise ValueError("An API token is needed for this operation.")
+            logger.error("Unable to complete the operation, an API token is needed")
+            raise ValueError("An API token is needed for this operation")
         if self.account is  None:
             self.init_account()
         self.root = self.api.get_content(self.account.root_folder)
@@ -748,17 +750,17 @@ class Helper:
 
     def init_hierarchy(self, folder :Folder) -> None:
         """
-        Populate the children of a folder recursively.
+        Populate the children of a folder recursively
 
         Args:
-            folder (Folder): The root folder of the hierarchy.
+            folder (Folder): The root folder of the hierarchy
 
         Raises:
-            ValueError: If no API token is set .
+            ValueError: If no API token is set
         """
         if self.api.token is None:
-            logger.error("Unable to complete the operation, an API token is needed.")
-            raise ValueError("An API token is needed for this operation.")
+            logger.error("Unable to complete the operation, an API token is needed")
+            raise ValueError("An API token is needed for this operation")
         if len(folder.children) == 0:
             return # Nothing to do
         if not isinstance(folder.children[0], Content):
@@ -773,17 +775,17 @@ class Helper:
                  destination : str | os.PathLike,
                  overwrite : bool = True) -> None:
         """
-        Download a file to local storage.
+        Download a file to local storage
 
         Args:
-            file (File): The file object to download.
-            destination (str | os.PathLike): Local path to destination file or folder.
-            overwrite (bool, optional): Overwrite if file already exists. Defaults to True.
+            file (File): The file object to download
+            destination (str | os.PathLike): Local path to destination file or folder
+            overwrite (bool, optional): Overwrite if file already exists. Defaults to True
 
         Raises:
-            FileExistsError: If file already exists and overwrite is set to False.
-            GofileNetworkException: In case of natwork error.
-            OSError: If the data could not be written to the local storage.
+            FileExistsError: If file already exists and overwrite is set to False
+            GofileNetworkException: In case of natwork error
+            OSError: If the data could not be written to the local storage
         """
         if os.path.isdir(destination):
             destination = os.path.join(destination, file.name)
@@ -801,7 +803,7 @@ class Helper:
                                            'Cookie' : f'accountToken={self.api.token}'})
             response = connection.getresponse()
             if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s.", response.status)
+                logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             with open(destination, "wb") as dest_file:
@@ -822,7 +824,7 @@ class Helper:
                     if 0 < size - written < len(buffer):
                         buffer = bytearray(size - written)
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
-            logger.error("Network error, %s.", network_error)
+            logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         finally:
             logger.debug("Closing connection to %s", host)
