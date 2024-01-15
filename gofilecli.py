@@ -155,7 +155,7 @@ class Folder(Content):
         self.is_public = is_public
         self.is_root = parent is None
         self.code = code
-        self.choldren = children
+        self.children = children
 
 
 @dataclass
@@ -395,7 +395,7 @@ class API:
                     raise GofileAPIException(f"Content ID {content_id} is not a folder.")
                 if r_data['data']['type'] == ContentType.FOLDER.value:
                     children = []
-                    for child in [r_data['data']['contents'][child_id] 
+                    for child in [r_data['data']['contents'][child_id]
                                   for child_id in r_data['data']['childs']]:
                         if child['type'] == ContentType.FOLDER.value:
                             children.append(Folder(content_id = child['id'],
@@ -495,7 +495,7 @@ class API:
             raise GofileAPIException() from decode_error
         finally:
             self.close()
-    
+
     def set_option(self, content_id : str, option : str, value : str) -> None:
         """
         Set an option on a specific content id to a specific value.
@@ -717,6 +717,57 @@ class API:
             self.close()
 
 
+class Helper:
+    """Implement higher level functions than the raw API."""
+
+    def __init__(self, api : API) -> None:
+        self.api : API = api
+        if self.api.token is None:
+            logger.warning("The api object does not have a token. functionnality will be limited.")
+        self.account : Account = None
+        self.root : Folder = None
+
+    def init_account(self) -> None:
+        """Query the account details. API token is required"""
+        if self.api.token is None:
+            logger.error("Unable to complete the operation, an API token is needed.")
+            raise ValueError("An API token is needed for this operation.")
+        self.account = self.api.get_account_details()
+
+    def init_root_folder(self) -> None:
+        """Query the folder structure recursively. API token is required"""
+        if self.api.token is None:
+            logger.error("Unable to complete the operation, an API token is needed.")
+            raise ValueError("An API token is needed for this operation.")
+        if self.account is  None:
+            self.init_account()
+        self.root = self.api.get_content(self.account.root_folder)
+        logger.info("Initializing root folder hierarchy")
+        self.init_hierarchy(self.root)
+
+    def init_hierarchy(self, folder :Folder) -> None:
+        """
+        Populate the children of a folder recursively.
+
+        Args:
+            folder (Folder): The root folder of the hierarchy.
+
+        Raises:
+            ValueError: If no API token is set .
+        """
+        if self.api.token is None:
+            logger.error("Unable to complete the operation, an API token is needed.")
+            raise ValueError("An API token is needed for this operation.")
+        if len(folder.children) == 0:
+            return # Nothing to do
+        if not isinstance(folder.children[0], Content):
+            # Get the current folder children
+            folder.children = self.api.get_content(folder.content_id).children
+        for child in folder.children:
+            if child.type == ContentType.FOLDER:
+                self.init_hierarchy(child)
+
+
 def cli_download(args : Namespace):
     """Download one or multiple gofile items"""
 
@@ -732,7 +783,7 @@ def main() -> int:
                                 default = 0,
                                 type = int,
                                 help = "Increase the verbosity (up to two times)")
-    
+
     parser_command.add_argument("-t", "--token",
                                 type = str,
                                 help = "Account token to use")
@@ -751,21 +802,21 @@ def main() -> int:
     parser_download.add_argument("items",
                                  nargs = "+",
                                  help = "Items to download, can be a complete URL or raw content ID")
-    
+
     parser_download.add_argument("-d", "--destination",
                                  help = "Target directory for the downloaded files/folders, defaults to current working directory",
                                  default = os.getcwd())
-    
+
     parser_download.add_argument("-f", "--flatten",
                                  help = "Download the remote files without reproducing the folder hierarchy")
-    
+
     args = parser_command.parse_args(sys.argv)
-    
+
     _init_logger(args.verbose)
 
     # Call the handler function for the selected subcommand
     args.func(args)
-    
+
 
 if __name__ == "__main__":
     sys.exit(main())
