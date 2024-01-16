@@ -828,12 +828,41 @@ class Helper:
             if m.group("size") != "*":
                 size_r = int(m.group("size"))
             if m.group("range") != "*":
-                start = m.group("start")
+                start = int(m.group("start"))
         if size is not None:
             return (size, start if start is not None else 0)
         if size_r is not None:
             return (size_r, start if start is not None else 0)
-        raise ValueError("No size could be obtained")      
+        raise ValueError("No size could be obtained")
+    
+    @staticmethod
+    def _compute_md5(source : str | os.PathLike) -> str:
+        """
+        return MD5 hash in hexadecimal form
+
+        Args:
+            source (str | os.PathLike): Path to file to hash
+
+        Raises:
+            OSError: In case of read error
+
+        Returns:
+            str: The hex form of the md5 hash
+        """
+        size = os.path.getsize(source)
+        with open(source, "rb") as file:
+            if size < 1000000:
+                return hashlib.md5(file.read()).hexdigest()
+            read = 0
+            md5_hash = hashlib.md5()
+            while read < size:
+                if size - read < 1000000:
+                    md5_hash.update(file.read())
+                    return md5_hash.hexdigest()
+                data = file.read(1000000)
+                read += len(data)
+                md5_hash.update(data)
+            return md5_hash.hexdigest()
 
     def download(self,
                  file : File,
@@ -870,9 +899,10 @@ class Helper:
                 return
             if exist_policy == ExistPolicy.RESUME:
                 exist_size = os.path.getsize(destination)
-                logger.warning("File %s already exists, trying to resume at byte %s",
-                               file.name,
-                               exist_size)
+                if exist_size == file.size:
+                    logger.warning("File %s already exists, skipping", file.name)
+                    return
+                logger.warning("File %s already exists", file.name)
         try:
             host = API.GOFILE_DOWNLOAD_HOST.format(server = file.server)
             logger.debug("Initiating connection to %s", host)
@@ -880,7 +910,8 @@ class Helper:
             headers = {'Host' : host,
                        'Cookie' : f'accountToken={self.api.token}'}
             if exist_size > 0 and file.size - exist_size > 0:
-                headers['Range'] = f"bytes={exist_size}"
+                logger.warning("Trying to resume download at byte %s", exist_size)
+                headers['Range'] = f"bytes={exist_size}-"
             connection.request("GET",
                                 parse.urlparse(file.link).path,
                                 headers = headers)
@@ -889,14 +920,12 @@ class Helper:
                 logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            with open(destination, "w+b") as dest_file:
+            with open(destination, "ab") as dest_file:
                 size, start = self._get_size(response)
                 dest_file.seek(start)
                 logger.info("Downloading %s bytes to %s", size, file.name)
                 buffer = bytearray(size) if size < 1000000 else bytearray(1000000)
                 written = 0
-                if md5:
-                    md5_hash = hashlib.md5()
                 while written < size:
                     n_read = response.readinto(buffer)
                     n_written = dest_file.write(buffer)
@@ -904,13 +933,13 @@ class Helper:
                         logger.error("Unable to write to file %s", destination)
                         raise OSError("Unable to write to file")
                     written += n_written
-                    if md5:
-                        md5_hash.update(buffer)
                     if 0 < size - written < len(buffer):
                         buffer = bytearray(size - written)
-                if md5 and file.md5 != md5_hash.hexdigest():
+            if md5:
+                md5_hash = self._compute_md5(destination)
+                if md5_hash != file.md5:
                     logger.error("MD5 hash not equal")
-                    logger.debug("%s\n%s", file.md5, md5_hash.hexdigest())
+                    logger.debug("%s != %s", file.md5, md5_hash)
                     raise GofileException("MD5 hash not equal")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
