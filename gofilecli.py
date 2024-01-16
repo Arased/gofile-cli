@@ -133,8 +133,8 @@ class File(Content):
 class Folder(Content):
     """
     Represent a gofile folder
-    When returned from API.get_content the children are Content objects but
-    their children (if the direct child is a folder) are content id strings
+    When a folder object was not directly returned from API.get_content
+    the children attribute might be None.
     """
 
     def __init__(self,
@@ -145,7 +145,7 @@ class Folder(Content):
                  is_owner : bool,
                  is_public : bool,
                  code : str,
-                 children : list[Content] | list[str]) -> None:
+                 children : list[Content] | None) -> None:
         super().__init__(content_id = content_id,
                          name = name,
                          parent = parent,
@@ -411,10 +411,11 @@ class API:
                                                    name = child['name'],
                                                    parent = child['parentFolder'],
                                                    create_time = child['createTime'],
-                                                   is_owner = r_data['data']['isOwner'],
+                                                   is_owner = r_data['data']['isOwner']
+                                                    if 'isOwner' in r_data['data'] else False,
                                                    is_public = child['public'],
                                                    code = child['code'],
-                                                   children = child['childs']))
+                                                   children = None))
                         elif child['type'] == ContentType.FILE.value:
                             children.append(File(content_id = child['id'],
                                                  name = child['name'],
@@ -432,7 +433,8 @@ class API:
                                   name = r_data['data']['name'],
                                   parent = r_data['data'].get('parentFolder', None),
                                   create_time = r_data['data']['createTime'],
-                                  is_owner = r_data['data']['isOwner'],
+                                  is_owner = r_data['data']['isOwner']
+                                    if 'isOwner' in r_data['data'] else False,
                                   is_public = r_data['data']['public'],
                                   code = r_data['data']['code'],
                                   children = children)
@@ -780,11 +782,11 @@ class Helper:
         if self.api.token is None:
             logger.error("Unable to complete the operation, an API token is needed")
             raise ValueError("An API token is needed for this operation")
-        if len(folder.children) == 0:
-            return # Nothing to do
-        if not isinstance(folder.children[0], Content):
+        if folder.children is None:
             # Get the current folder children
             folder.children = self.api.get_content(folder.content_id).children
+        if len(folder.children) == 0:
+            return # Nothing to do
         for child in folder.children:
             if child.type == ContentType.FOLDER:
                 self.init_hierarchy(child)
@@ -808,10 +810,13 @@ class Helper:
         """
         if os.path.isdir(destination):
             destination = os.path.join(destination, file.name)
-        if os.path.isfile(destination) and not overwrite:
+        elif os.path.isfile(destination) and not overwrite:
             logger.error("Destination file %s already exists, and overwrite is False", destination)
             raise FileExistsError("Destination already exists")
-        os.makedirs(os.path.dirname(destination), exist_ok = True)
+        else:
+            logger.debug("Creating destination directory")
+            os.makedirs(destination)
+            destination = os.path.join(destination, file.name)
         try:
             host = API.GOFILE_DOWNLOAD_HOST.format(server = file.server)
             logger.debug("Initiating connection to %s", host)
@@ -848,6 +853,70 @@ class Helper:
         finally:
             logger.debug("Closing connection to %s", host)
             connection.close()
+
+    def traverse_hierarchy(self,
+                           folder : Folder,
+                           basename : str | None = None,
+                           use_codes : bool = False) -> list[tuple[str, File]]:
+        """
+        Recursively generate the list of files in a hierachy
+        Each tuple in the return list contains a path built from the folder names and a File object
+        Because GoFile allows different folders with the same name, two fils might have an identical
+        path while residing in two different FoFile folders.
+
+        Args:
+            folder (Folder): The root folder of the hierarchy
+            basename (str | None, optional): A base path prefix to append before each paths.
+                Defaults to None.
+            use_codes (bool, optional): Use the folder codes instead of names, prevents overlaps.
+                Defaults to False.
+
+        Returns:
+            list[tuple[str, File]]: List of tuple (path, File object)
+        """
+        if basename is None:
+            basename = ""
+        res = []
+        if folder.children is None:
+            self.init_hierarchy(folder)
+        for child in folder.children:
+            if child.type == ContentType.FILE:
+                res.append((basename, child))
+            elif use_codes:
+                res += self.traverse_hierarchy(child, child.code)
+            else:
+                res += self.traverse_hierarchy(child, child.name)
+        return res
+
+    def download_folder(self,
+                        folder : str | Folder,
+                        destination : str | os.PathLike,
+                        overwrite : bool = True,
+                        flatten : bool = False) -> None:
+        """
+        Download a folder content and its children content recursively
+
+        Args:
+            folder (str | Folder): The root folder to download
+            destination (str | os.PathLike): The destination folder
+            overwrite (bool, optional): Wether to overwrite existing files. Defaults to True.
+            flatten (bool, optional): Do not reproduce the folder structure. Defaults to False.
+
+        Raises:
+            ValueError: If the destination is not a valid folder
+        """
+        if os.path.isfile(destination):
+            logger.error("The destination points to an already existing file")
+            raise ValueError("Destination can not be a file")
+        os.makedirs(destination, exist_ok = True)
+        if not isinstance(folder, Folder):
+            folder = self.api.get_content(folder)
+        to_download = self.traverse_hierarchy(folder, folder.name)
+        for suffix, file in to_download:
+            if flatten:
+                self.download(file, destination, overwrite)
+            else :
+                self.download(file, os.path.join(destination, suffix), overwrite)
 
 
 def cli_download(args : Namespace):
