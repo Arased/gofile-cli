@@ -7,12 +7,13 @@ import sys
 import re
 import ssl
 import json
+import hashlib
 from dataclasses import dataclass
+from collections import namedtuple
 from enum import Enum
 from argparse import ArgumentParser, Namespace
 from http.client import HTTPSConnection, HTTPException, HTTPResponse
 from urllib import parse
-from collections import namedtuple
 
 
 logger = logging.getLogger(__name__)
@@ -837,7 +838,8 @@ class Helper:
     def download(self,
                  file : File,
                  destination : str | os.PathLike,
-                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE) -> None:
+                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
+                 md5 : bool = False) -> None:
         """
         Download a file to local storage
         To change the filename of the downloaded file,
@@ -847,6 +849,7 @@ class Helper:
             file (File): The file object to download
             destination (str | os.PathLike): Local path to destination directory
             exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "overwrite".
+            md5 (bool, optional): Chack the md5 sum of downloaded files. Defaults to False.
 
         Raises:
             FileExistsError: If destination is a file
@@ -886,12 +889,14 @@ class Helper:
                 logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
-            with open(destination, "wb") as dest_file:
+            with open(destination, "w+b") as dest_file:
                 size, start = self._get_size(response)
                 dest_file.seek(start)
                 logger.info("Downloading %s bytes to %s", size, file.name)
                 buffer = bytearray(size) if size < 1000000 else bytearray(1000000)
                 written = 0
+                if md5:
+                    md5_hash = hashlib.md5()
                 while written < size:
                     n_read = response.readinto(buffer)
                     n_written = dest_file.write(buffer)
@@ -899,8 +904,14 @@ class Helper:
                         logger.error("Unable to write to file %s", destination)
                         raise OSError("Unable to write to file")
                     written += n_written
+                    if md5:
+                        md5_hash.update(buffer)
                     if 0 < size - written < len(buffer):
                         buffer = bytearray(size - written)
+                if md5 and file.md5 != md5_hash.hexdigest():
+                    logger.error("MD5 hash not equal")
+                    logger.debug("%s\n%s", file.md5, md5_hash.hexdigest())
+                    raise GofileException("MD5 hash not equal")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
@@ -946,7 +957,8 @@ class Helper:
                         folder : str | Folder,
                         destination : str | os.PathLike,
                         exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
-                        flatten : bool = False) -> None:
+                        flatten : bool = False,
+                        md5 : bool = False) -> None:
         """
         Download a folder content and its children content recursively
 
@@ -955,6 +967,7 @@ class Helper:
             destination (str | os.PathLike): The destination folder
             exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "overwrite".
             flatten (bool, optional): Do not reproduce the folder structure. Defaults to False.
+            md5 (bool, optional): Chack the md5 sum of downloaded files. Defaults to False.
 
         Raises:
             ValueError: If the destination is not a valid folder
@@ -971,7 +984,8 @@ class Helper:
         for suffix, file in to_download:
             self.download(file,
                           destination if flatten else os.path.join(destination, suffix),
-                          exist_policy)
+                          exist_policy,
+                          md5)
 
 
 def cli_download(args : Namespace):
