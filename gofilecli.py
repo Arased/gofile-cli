@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from argparse import ArgumentParser, Namespace
-from http.client import HTTPSConnection, HTTPException
+from http.client import HTTPSConnection, HTTPException, HTTPResponse
 from urllib import parse
 from collections import namedtuple
 
@@ -83,6 +83,13 @@ UploadResult = namedtuple("UploadResult",
                            "filename",
                            "md5",
                            "parent_folder"])
+
+
+class ExistPolicy(Enum):
+    """Actions when destination file exist"""
+    OVERWRITE = "overwrite"  # Always overwrite
+    SKIP = "skip"  # Always skip
+    RESUME = "resume"  # Download remainder, skip if complete
 
 
 class ContentType(Enum):
@@ -791,53 +798,100 @@ class Helper:
             if child.type == ContentType.FOLDER:
                 self.init_hierarchy(child)
 
+    @staticmethod
+    def _get_size(response : HTTPResponse) -> tuple[int, int]:
+        """
+        Parse headers to determine payload size
+
+        Args:
+            response (HTTPResponse): The response object to get the headers from
+
+        Raises:
+            ValueError: If the headers are invalid or not present
+
+        Returns:
+            tuple[int, int]: Tuple in the form (size, start-byte)
+        """
+        content_length = response.getheader("Content-Length")
+        content_range = response.getheader("Content-Range")
+        size, start, size_r = None, None, None
+        if content_length is not None:
+            size = int(content_length)
+        if content_range is not None:
+            pattern = re.compile(r"^(?P<unit>[a-zA-Z]+) (?P<range>(?P<start>[0-9]+)-(?P<end>[0-9]+)|\*)/(?P<size>[0-9]+|\*)$")
+            m = pattern.match(content_range)
+            if m is None:
+                raise ValueError("Invalid Content-Range header")
+            if m.group("unit") != "bytes":
+                raise ValueError("Only bytes sizes are supported")
+            if m.group("size") != "*":
+                size_r = int(m.group("size"))
+            if m.group("range") != "*":
+                start = m.group("start")
+        if size is not None:
+            return (size, start if start is not None else 0)
+        if size_r is not None:
+            return (size_r, start if start is not None else 0)
+        raise ValueError("No size could be obtained")      
+
     def download(self,
                  file : File,
                  destination : str | os.PathLike,
-                 overwrite : bool = True) -> None:
+                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE) -> None:
         """
         Download a file to local storage
+        To change the filename of the downloaded file,
+        change the name attribute of the argument File object
 
         Args:
             file (File): The file object to download
-            destination (str | os.PathLike): Local path to destination file or folder
-            overwrite (bool, optional): Overwrite if file already exists. Defaults to True
+            destination (str | os.PathLike): Local path to destination directory
+            exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "overwrite".
 
         Raises:
-            FileExistsError: If file already exists and overwrite is set to False
+            FileExistsError: If destination is a file
             GofileNetworkException: In case of natwork error
             OSError: If the data could not be written to the local storage
         """
-        if os.path.isdir(destination):
-            destination = os.path.join(destination, file.name)
-        elif os.path.isfile(destination) and not overwrite:
-            logger.error("Destination file %s already exists, and overwrite is False", destination)
-            raise FileExistsError("Destination already exists")
-        else:
-            logger.debug("Creating destination directory")
-            os.makedirs(destination)
-            destination = os.path.join(destination, file.name)
+        exist_policy = exist_policy if isinstance(exist_policy, ExistPolicy) \
+            else ExistPolicy(exist_policy)
+        if os.path.isfile(destination):
+            logger.error("Destination %s is a file", destination)
+            raise FileExistsError("Destination is a file")
+        os.makedirs(destination, exist_ok = True)
+        destination = os.path.join(destination, file.name)
+        exist_size = 0
+        if os.path.isfile(destination):
+            if exist_policy == ExistPolicy.SKIP:
+                logger.warning("File %s already exists, skipping", file.name)
+                return
+            if exist_policy == ExistPolicy.RESUME:
+                exist_size = os.path.getsize(destination)
+                logger.warning("File %s already exists, trying to resume at byte %s",
+                               file.name,
+                               exist_size)
         try:
             host = API.GOFILE_DOWNLOAD_HOST.format(server = file.server)
             logger.debug("Initiating connection to %s", host)
             connection = HTTPSConnection(host)
+            headers = {'Host' : host,
+                       'Cookie' : f'accountToken={self.api.token}'}
+            if exist_size > 0 and file.size - exist_size > 0:
+                headers['Range'] = f"bytes={exist_size}"
             connection.request("GET",
                                 parse.urlparse(file.link).path,
-                                headers = {'Host' : host,
-                                           'Cookie' : f'accountToken={self.api.token}'})
+                                headers = headers)
             response = connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s", response.status)
                 logger.debug("Data received : %s", response.read())
                 raise GofileNetworkException(f"HTTP Error code {response.status}")
             with open(destination, "wb") as dest_file:
-                size = int(response.getheader("Content-Length"))
-                logger.debug("Downloading %s bytes to %s", size, os.path.basename(destination))
-                if size < 1000000:
-                    buffer = bytearray(size)
-                else:
-                    buffer = bytearray(size // 100)
-                    written = 0
+                size, start = self._get_size(response)
+                dest_file.seek(start)
+                logger.info("Downloading %s bytes to %s", size, file.name)
+                buffer = bytearray(size) if size < 1000000 else bytearray(1000000)
+                written = 0
                 while written < size:
                     n_read = response.readinto(buffer)
                     n_written = dest_file.write(buffer)
@@ -862,7 +916,7 @@ class Helper:
         Recursively generate the list of files in a hierachy
         Each tuple in the return list contains a path built from the folder names and a File object
         Because GoFile allows different folders with the same name, two fils might have an identical
-        path while residing in two different FoFile folders.
+        path while residing in two different GoFile folders.
 
         Args:
             folder (Folder): The root folder of the hierarchy
@@ -883,15 +937,15 @@ class Helper:
             if child.type == ContentType.FILE:
                 res.append((basename, child))
             elif use_codes:
-                res += self.traverse_hierarchy(child, child.code)
+                res += self.traverse_hierarchy(child, os.path.join(basename, child.code))
             else:
-                res += self.traverse_hierarchy(child, child.name)
+                res += self.traverse_hierarchy(child, os.path.join(basename, child.name))
         return res
 
     def download_folder(self,
                         folder : str | Folder,
                         destination : str | os.PathLike,
-                        overwrite : bool = True,
+                        exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
                         flatten : bool = False) -> None:
         """
         Download a folder content and its children content recursively
@@ -899,12 +953,14 @@ class Helper:
         Args:
             folder (str | Folder): The root folder to download
             destination (str | os.PathLike): The destination folder
-            overwrite (bool, optional): Wether to overwrite existing files. Defaults to True.
+            exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "overwrite".
             flatten (bool, optional): Do not reproduce the folder structure. Defaults to False.
 
         Raises:
             ValueError: If the destination is not a valid folder
         """
+        if not isinstance(exist_policy, ExistPolicy):
+            exist_policy = ExistPolicy(exist_policy)
         if os.path.isfile(destination):
             logger.error("The destination points to an already existing file")
             raise ValueError("Destination can not be a file")
@@ -913,10 +969,9 @@ class Helper:
             folder = self.api.get_content(folder)
         to_download = self.traverse_hierarchy(folder, folder.name)
         for suffix, file in to_download:
-            if flatten:
-                self.download(file, destination, overwrite)
-            else :
-                self.download(file, os.path.join(destination, suffix), overwrite)
+            self.download(file,
+                          destination if flatten else os.path.join(destination, suffix),
+                          exist_policy)
 
 
 def cli_download(args : Namespace):
