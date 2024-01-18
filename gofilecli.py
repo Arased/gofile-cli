@@ -19,6 +19,27 @@ from urllib import parse
 logger = logging.getLogger(__name__)
 
 
+class Formatter(logging.Formatter):
+    """Basic formatter subclass that adds color"""
+
+    GREY = "\x1b[38;20m"
+    YELLOW = "\x1b[33;20m"
+    RED = "\x1b[31;20m"
+    RED_BOLD = "\x1b[31;1m"
+    RESET = "\x1b[0m"
+
+    FORMATS = {
+        logging.DEBUG: GREY,
+        logging.INFO: GREY,
+        logging.WARNING: YELLOW,
+        logging.ERROR: RED,
+        logging.CRITICAL: RED_BOLD
+    }
+
+    def format(self, record):
+        return self.FORMATS[record.levelno] + super().format(record) + self.RESET
+
+
 def _init_logger(level : int):
     """
     Initialize the module logger for CLI
@@ -31,7 +52,6 @@ def _init_logger(level : int):
     Raises:
         ValueError: If a negative number was provided
     """
-    logging.basicConfig()
     if level == 0:
         logger.setLevel(logging.WARNING)
     elif level == 1:
@@ -40,6 +60,10 @@ def _init_logger(level : int):
         logger.setLevel(logging.DEBUG)
     else:
         raise ValueError(f"{level} is not a valid verbosity level")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logger.level)
+    handler.setFormatter(Formatter("%(levelname)s : %(message)s"))
+    logger.addHandler(handler)
 
 
 def parse_url(url_candidate : str) -> str | None:
@@ -1054,20 +1078,37 @@ class Helper:
         logger.info("Folder %s downloaded successfully", folder.name)
 
 
-def cli_download(args : Namespace):
+def cli_download(args : Namespace) -> int:
     """Download one or multiple gofile items"""
+    items = []
+    for item in args.items:
+        content_id = parse_url(item)
+        if content_id is None: # url parsing failed, assume the item is a valid id
+            content_id  = item
+        items.append(content_id)
+    if args.token is None:
+        logger.error("A token is required for this operation")
+        return 1
+    api = API(args.token)
+    helper = Helper(api)
+    logger.info("Downloading %s items", len(items))
+    for item in items:
+        helper.download_folder(item,
+                               args.destination,
+                               ExistPolicy.RESUME if not args.overwrite else ExistPolicy.OVERWRITE,
+                               args.flatten,
+                               args.md5,
+                               args.partfile)
 
 
 def main() -> int:
     """Main function for CLI functionnality"""
-    parser_command = ArgumentParser(prog = "gofilecli",
-                                    description = "gofile.io python client",
+    parser_command = ArgumentParser(description = "gofile.io python client",
                                     epilog = '')
 
     parser_command.add_argument("-v", "--verbose",
                                 action = "count",
                                 default = 0,
-                                type = int,
                                 help = "Increase the verbosity (up to two times)")
 
     parser_command.add_argument("-t", "--token",
@@ -1087,7 +1128,7 @@ def main() -> int:
 
     parser_download.add_argument("items",
                                  nargs = "+",
-                                 help = "Items to download, can be a complete URL or raw content ID")
+                                 help = "Items to download, can be a complete URL or a folder content ID")
 
     parser_download.add_argument("-d", "--destination",
                                  help = "Target directory for the downloaded files/folders, defaults to current working directory",
@@ -1096,12 +1137,27 @@ def main() -> int:
     parser_download.add_argument("-f", "--flatten",
                                  help = "Download the remote files without reproducing the folder hierarchy")
 
-    args = parser_command.parse_args(sys.argv)
+    parser_download.add_argument("-p", "--partfile",
+                                 action = "store_true",
+                                 help = "Add '.part' to the end of incomplete files")
+
+    parser_download.add_argument("-o", "--overwrite",
+                                 action = "store_true",
+                                 help = "Always overwrite and start incomplete download from scratch")
+
+    parser_download.add_argument("--md5",
+                                 action = "store_true",
+                                 help = "Verify the md5 checksum after download")
+
+    parser_download.add_argument("-b", "--batch",
+                                 help = "Read a text file and download one item for each line")
+
+    args = parser_command.parse_args()
 
     _init_logger(args.verbose)
 
     # Call the handler function for the selected subcommand
-    args.func(args)
+    return args.func(args)
 
 
 if __name__ == "__main__":
