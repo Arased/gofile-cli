@@ -864,45 +864,22 @@ class Helper:
                 md5_hash.update(data)
             return md5_hash.hexdigest()
 
-    def download(self,
-                 file : File,
-                 destination : str | os.PathLike,
-                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
-                 md5 : bool = False) -> None:
+    def _download(self,
+                  file : File,
+                  destination : str | os.PathLike,
+                  exist_size : int = 0) -> None:
         """
-        Download a file to local storage
-        To change the filename of the downloaded file,
-        change the name attribute of the argument File object
+        Actually perform the download
 
         Args:
-            file (File): The file object to download
-            destination (str | os.PathLike): Local path to destination directory
-            exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "overwrite".
-            md5 (bool, optional): Chack the md5 sum of downloaded files. Defaults to False.
+            file (File): File to download
+            destination (str | os.PathLike): Destination file
+            exist_size (int, optional): SIze of file already on disk. Defaults to 0.
 
         Raises:
-            FileExistsError: If destination is a file
-            GofileNetworkException: In case of natwork error
-            OSError: If the data could not be written to the local storage
+            GofileNetworkException: In case of network failure
+            OSError: When unable to write to disk
         """
-        exist_policy = exist_policy if isinstance(exist_policy, ExistPolicy) \
-            else ExistPolicy(exist_policy)
-        if os.path.isfile(destination):
-            logger.error("Destination %s is a file", destination)
-            raise FileExistsError("Destination is a file")
-        os.makedirs(destination, exist_ok = True)
-        destination = os.path.join(destination, file.name)
-        exist_size = 0
-        if os.path.isfile(destination):
-            if exist_policy == ExistPolicy.SKIP:
-                logger.warning("File %s already exists, skipping", file.name)
-                return
-            if exist_policy == ExistPolicy.RESUME:
-                exist_size = os.path.getsize(destination)
-                if exist_size == file.size:
-                    logger.warning("File %s already exists, skipping", file.name)
-                    return
-                logger.warning("File %s already exists", file.name)
         try:
             host = API.GOFILE_DOWNLOAD_HOST.format(server = file.server)
             logger.debug("Initiating connection to %s", host)
@@ -935,18 +912,75 @@ class Helper:
                     written += n_written
                     if 0 < size - written < len(buffer):
                         buffer = bytearray(size - written)
-            if md5:
-                md5_hash = self._compute_md5(destination)
-                if md5_hash != file.md5:
-                    logger.error("MD5 hash not equal")
-                    logger.debug("%s != %s", file.md5, md5_hash)
-                    raise GofileException("MD5 hash not equal")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
             raise GofileNetworkException() from network_error
         finally:
             logger.debug("Closing connection to %s", host)
             connection.close()
+
+    def download(self,
+                 file : File,
+                 destination : str | os.PathLike,
+                 exist_policy : str | ExistPolicy = ExistPolicy.RESUME,
+                 md5 : bool = True,
+                 partfile : bool = False) -> None:
+        """
+        Download a file to local storage
+        To change the filename of the downloaded file,
+        change the name attribute of the argument File object
+        
+        Notes for exist_policy:
+        "overwrite" always overwrite and starts every download from the first byte
+        "skip" always skips if the final filename is present and starts from the first byte otherwise
+        "resume" 
+
+        Args:
+            file (File): The file object to download
+            destination (str | os.PathLike): Local path to destination directory
+            exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "resume".
+            md5 (bool, optional): Chack the md5 sum of downloaded files. Defaults to True.
+            partifle (bool, optional): Mark unfinished downloads with .part suffix. Defaults to False.
+
+        Raises:
+            FileExistsError: If destination is a file
+            GofileNetworkException: In case of natwork error
+            OSError: If the data could not be written to the local storage
+        """
+        exist_policy = exist_policy if isinstance(exist_policy, ExistPolicy) \
+            else ExistPolicy(exist_policy)
+        if os.path.isfile(destination):
+            logger.error("Destination %s is a file", destination)
+            raise FileExistsError("Destination is a file")
+        os.makedirs(destination, exist_ok = True)
+        destination = os.path.join(destination, file.name)
+        exist_size = 0
+        # Check if should skip
+        if os.path.isfile(destination) \
+            and (exist_policy == ExistPolicy.SKIP \
+                 or exist_policy == ExistPolicy.RESUME and partfile):
+            logger.warning("File %s already exists, skipping", file.name)
+            return
+        if partfile:
+            destination += ".part"
+        # Check if should resume
+        if os.path.isfile(destination) and exist_policy == ExistPolicy.RESUME:
+            exist_size = os.path.getsize(destination)
+            if exist_size == file.size:
+                logger.warning("File %s already exists, skipping", file.name)
+                return
+            logger.warning("File %s already exists, resuming from byte %s", file.name, exist_size)
+        self._download(file, destination, exist_size)
+        if md5:
+            md5_hash = self._compute_md5(destination)
+            if md5_hash != file.md5:
+                logger.error("MD5 hash not equal")
+                logger.debug("%s != %s", file.md5, md5_hash)
+                raise GofileException("MD5 hash not equal")
+        if partfile:
+            os.rename(destination, destination.removesuffix(".part"))
+        logger.info("File %s downloaded successfully",
+                    os.path.basename(destination).removesuffix(".part"))
 
     def traverse_hierarchy(self,
                            folder : Folder,
@@ -987,7 +1021,8 @@ class Helper:
                         destination : str | os.PathLike,
                         exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
                         flatten : bool = False,
-                        md5 : bool = False) -> None:
+                        md5 : bool = False,
+                        partfile : bool = False) -> None:
         """
         Download a folder content and its children content recursively
 
@@ -1014,7 +1049,9 @@ class Helper:
             self.download(file,
                           destination if flatten else os.path.join(destination, suffix),
                           exist_policy,
-                          md5)
+                          md5,
+                          partfile)
+        logger.info("Folder %s downloaded successfully", folder.name)
 
 
 def cli_download(args : Namespace):
