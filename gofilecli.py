@@ -26,10 +26,11 @@ class Formatter(logging.Formatter):
     YELLOW = "\x1b[33;20m"
     RED = "\x1b[31;20m"
     RED_BOLD = "\x1b[31;1m"
+    BLUE = "\x1b[34;20m"
     RESET = "\x1b[0m"
 
     FORMATS = {
-        logging.DEBUG: GREY,
+        logging.DEBUG: BLUE,
         logging.INFO: GREY,
         logging.WARNING: YELLOW,
         logging.ERROR: RED,
