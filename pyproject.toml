@@ -1,10 +1,19 @@
 [project]
 name = "gofilecli"
-version = "0.0.1"
+version = "0.1.0"
 description = "Simple client for the gofile.io web API"
 authors = [
-    {name = "Thomas Hervier", email = "thomas.hervier@proton.me@"},
+    {name = "Thomas Hervier", email = "thomas.hervier+python@proton.me@"},
 ]
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+gofilecli = "gofilecli:main"
 
 [build-system]
 requires = ["setuptools", "setuptools-scm"]
