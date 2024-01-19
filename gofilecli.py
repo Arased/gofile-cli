@@ -946,7 +946,6 @@ class API:
 
 class Helper:
     """Implement higher level functions than the raw API"""
-    # TODO add callbacks as helper instance variables
 
     def __init__(self, api : API,
                  exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE) -> None:
