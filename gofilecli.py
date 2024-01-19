@@ -1080,11 +1080,16 @@ class Helper:
 def cli_download(args : Namespace) -> int:
     """Download one or multiple gofile items"""
     items = []
+    if args.batch:
+        with open(args.batch, "rt", encoding = "utf-8") as batchfile:
+            for line in batchfile:
+                content_id = parse_url(line)
+                items.append(content_id if content_id is not None else line)
     for item in args.items:
         content_id = parse_url(item)
-        if content_id is None: # url parsing failed, assume the item is a valid id
-            content_id  = item
-        items.append(content_id)
+        items.append(content_id if content_id is not None else item)
+    if len(items) == 0:
+        logger.warning("No command line items or batch file was supplied")
     if args.token is None:
         logger.error("A token is required for this operation")
         return 1
@@ -1127,7 +1132,7 @@ def main() -> int:
     parser_download.set_defaults(func = cli_download)
 
     parser_download.add_argument("items",
-                                 nargs = "+",
+                                 nargs = "*",
                                  help = "Items to download, can be a complete URL or a folder content ID")
 
     parser_download.add_argument("-d", "--destination",
