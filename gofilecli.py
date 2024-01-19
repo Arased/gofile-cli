@@ -315,6 +315,7 @@ class ProgressPrinter(ProgressCallback):
               sep = ' ',
               end = '\r',
               flush = True)
+        self._counter = perf_counter()
 
     def end(self, message : str) -> None:
         """
