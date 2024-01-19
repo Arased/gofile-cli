@@ -1117,6 +1117,8 @@ def cli_download(args : Namespace) -> int:
     if args.batch:
         with open(args.batch, "rt", encoding = "utf-8") as batchfile:
             for line in batchfile:
+                if len(line) == 0:
+                    continue
                 content_id = parse_url(line)
                 items.append(content_id if content_id is not None else line)
     for item in args.items:
