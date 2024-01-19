@@ -14,7 +14,9 @@ from enum import Enum
 from argparse import ArgumentParser, Namespace
 from http.client import HTTPSConnection, HTTPException, HTTPResponse
 from urllib import parse
-from typing import Callable, IO
+from typing import IO
+from abc import ABC, abstractmethod
+from time import perf_counter
 
 
 logger = logging.getLogger(__name__)
@@ -213,6 +215,123 @@ class Account:
     total_size_limit : int
 
 
+class ProgressCallback(ABC):
+    """
+    ABC defining the callback structure for Helper and API
+    The callbacks are used when downloading/upoloading files
+    """
+
+    @abstractmethod
+    def __init__(self, total : int | None) -> None:
+        """
+        Args:
+            total (int): Total amount of bytes of the task if known
+        """
+
+    @abstractmethod
+    def step(self, step_size : int, message : str) -> None:
+        """
+        Called for each processed chunk with 'step_size'
+        being the number of processed bytes since the las call
+        and message being the name of the task being worked on
+
+        Args:
+            step_size (int): Number of bytes processed since last call
+            prefix (str): Name of current task
+        """
+
+    @abstractmethod
+    def end(self, message : str) -> None:
+        """
+        Called when a task is finished
+
+        Args:
+            message (str): Name of the task
+        """
+
+    @abstractmethod
+    def skip(self, amount : int) -> None:
+        """
+        Skip the progress by 'amount' without calling 'step'
+
+        Args:
+            amount (int): Amount of bytes already processed
+        """
+
+
+class ProgressPrinter(ProgressCallback):
+    """Tracks instant processing speed and progress and prints stats"""
+
+    def __init__(self, total : int | None = None) -> None:
+        self.total = total
+        self._counter = None
+        self._fraction_amount = 0
+
+    def _format_total(self) -> str:
+        """Return the total amount of bytes in human readable form"""
+        if self.total is None:
+            return "Unknown"
+        if self.total < 1_000:
+            return f"{self.total} B"
+        if  self.total < 1_000_000:
+            return f"{self.total // 1_000} kB"
+        if self.total < 1_000_000_000:
+            return f"{self.total // 1_000_000} MB"
+        return f"{self.total // 1_000_000_000} GB"
+
+    @staticmethod
+    def _format_rate(rate) -> str:
+        if rate < 1_000:
+            return f"{rate:.2f} B/s"
+        if rate < 1_000_000:
+            return f"{rate / 1_000:.2f} kB/s"
+        if rate < 1_000_000_000:
+            return f"{rate / 1_000_000:.2f} MB/s"
+        return f"{rate / 1_000_000_000:.2f} GB/s"
+
+    def _compute_percentage(self):
+        return str(int(self._fraction_amount / self.total * 100))
+
+    def step(self, step_size : int, message :str) -> None:
+        """
+        Update and print the stats
+        Nothing else should print while the task is running
+
+        Args:
+            step_size (int): Amount of bytes processed since last call
+            prefix (str): Message to be printed before stats
+        """
+        if self._counter is None:
+            self._counter = perf_counter()
+            return
+        elapsed_time = perf_counter() - self._counter
+        self._fraction_amount += step_size
+        print("\x1b[36;20m" + message,
+              self._format_rate(step_size / elapsed_time),
+              self._compute_percentage() + "%",
+              "out of",
+              self._format_total(),
+              "\x1b[0m",
+              sep = ' ',
+              end = '\r',
+              flush = True)
+
+    def end(self, message : str) -> None:
+        """
+        Print an end message and reset the color
+
+        Args:
+            message (str): _description_
+        """
+        width = len(message) + 36
+        print(f"\x1b[32;20m{message:{width}}\x1b[0m")
+        self._counter = None
+        self._fraction_amount = 0
+
+    def skip(self, amount: int) -> None:
+        self._fraction_amount += amount
+
+
 class API:
     """Wrapper for API calls"""
 
@@ -225,7 +344,8 @@ class API:
     def __init__(self,
                  token : str | None = None,
                  ssl_context : ssl.SSLContext | None = None,
-                 chunk_size : int = 1000) -> None:
+                 chunk_size : int = 1000,
+                 progress_callback : type[ProgressCallback] | None = None) -> None:
         """
         Create an API wrapper
 
@@ -242,6 +362,8 @@ class API:
         self._api_connection = HTTPSConnection(self.GOFILE_API_HOST,
                                                context = self._ssl_context)
         self.chunk_size = chunk_size
+        self.callback_class = progress_callback
+        self.callback = None
 
     def close(self) -> None:
         """Close the underlying connections"""
@@ -331,6 +453,9 @@ class API:
                 data = self.source.read(self.parent.chunk_size)
                 if len(data) < self.parent.chunk_size:
                     eof = True
+                if self.parent.callback is not None:
+                    self.parent.callback.step(self.parent.chunk_size,
+                                              self.filename)
                 yield data
             yield self._epilogue
 
@@ -372,6 +497,7 @@ class API:
             folder = folder.content_id
 
         source = None
+        size = None
         if isinstance(file, tuple):
             filename = file[1]
             payload = self._Formdata(file[0],
@@ -380,11 +506,15 @@ class API:
                                      folder)
         else:
             filename = os.path.basename(file)
+            size = os.path.getsize(file)
             source = open(file, "rb")
             payload = self._Formdata(source,
                                      filename,
                                      self,
                                      folder)
+
+        if self.callback_class is not None:
+            self.callback = self.callback_class(size)
 
         try:
             if upload_server is None:
@@ -410,6 +540,10 @@ class API:
             response_data = json.loads(response.read().decode(self.ENCODING))
             logger.debug("Data received : %s", response_data)
             if response_data['status'] == 'ok':
+                if self.callback is not None:
+                    self.callback.end(filename)
+                    self.callback = None
+                logger.info("Upload of %s successful", filename)
                 return UploadResult(response_data['data']['code'],
                                     response_data['data']['downloadPage'],
                                     response_data['data']['fileId'],
@@ -964,6 +1098,8 @@ class Helper:
             with open(destination, "ab") as dest_file:
                 size, start = self._get_size(response)
                 dest_file.seek(start)
+                if self.api.callback is not None:
+                    self.api.callback.skip(start)
                 logger.info("Downloading %s bytes to %s", size, file.name)
                 buffer = bytearray(size) if size < self.api.chunk_size \
                     else bytearray(self.api.chunk_size)
@@ -971,6 +1107,8 @@ class Helper:
                 while written < size:
                     n_read = response.readinto(buffer)
                     n_written = dest_file.write(buffer)
+                    if self.api.callback is not None:
+                        self.api.callback.step(n_written, file.name)
                     if n_read > n_written:
                         logger.error("Unable to write to file %s", destination)
                         raise OSError("Unable to write to file")
@@ -1033,6 +1171,8 @@ class Helper:
                 logger.warning("File %s already exists, skipping", file.name)
                 return
             logger.warning("File %s already exists, resuming from byte %s", file.name, exist_size)
+        if self.api.callback_class is not None:
+            self.api.callback = self.api.callback_class(file.size)
         self._download(file, destination, exist_size)
         if md5:
             md5_hash = self._compute_md5(destination)
@@ -1042,6 +1182,9 @@ class Helper:
                 raise GofileException("MD5 hash not equal")
         if partfile:
             os.rename(destination, destination.removesuffix(".part"))
+        if self.api.callback is not None:
+            self.api.callback.end(os.path.basename(destination).removesuffix(".part"))
+            self.api.callback = None
         logger.info("File %s downloaded successfully",
                     os.path.basename(destination).removesuffix(".part"))
 
@@ -1130,7 +1273,7 @@ def cli_download(args : Namespace) -> int:
     if args.token is None:
         logger.error("A token is required for this operation")
         return 1
-    api = API(args.token)
+    api = API(args.token, progress_callback = ProgressPrinter)
     helper = Helper(api,
                     ExistPolicy.OVERWRITE if args.overwrite else ExistPolicy.RESUME)
     logger.info("Downloading %s items", len(items))
