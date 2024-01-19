@@ -9,11 +9,12 @@ import ssl
 import json
 import hashlib
 from dataclasses import dataclass
-from collections import namedtuple
+from collections import abc, namedtuple
 from enum import Enum
 from argparse import ArgumentParser, Namespace
 from http.client import HTTPSConnection, HTTPException, HTTPResponse
 from urllib import parse
+from typing import Callable, IO
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def _init_logger(level : int):
         raise ValueError(f"{level} is not a valid verbosity level")
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logger.level)
-    handler.setFormatter(Formatter("%(levelname)s : %(message)s"))
+    handler.setFormatter(Formatter("%(message)s"))
     logger.addHandler(handler)
 
 
@@ -223,7 +224,8 @@ class API:
 
     def __init__(self,
                  token : str | None = None,
-                 ssl_context : ssl.SSLContext | None = None) -> None:
+                 ssl_context : ssl.SSLContext | None = None,
+                 chunk_size : int = 1000) -> None:
         """
         Create an API wrapper
 
@@ -239,6 +241,7 @@ class API:
             self._ssl_context = ssl.create_default_context()
         self._api_connection = HTTPSConnection(self.GOFILE_API_HOST,
                                                context = self._ssl_context)
+        self.chunk_size = chunk_size
 
     def close(self) -> None:
         """Close the underlying connections"""
@@ -284,15 +287,62 @@ class API:
         finally:
             self.close()
 
+    class _Formdata(abc.Iterable):
+        """Represent the Formdata formatted body for uploading files"""
+
+        BOUNDARY = "-------PYTHON-GOFILECLI-BOUNDARY"
+        FIELDS_FORMAT = '\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+        FILE_FORMAT = '\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+
+        def __init__(self,
+                     source : IO,
+                     filename : str,
+                     parent,
+                     folder : str | None = None) -> None:
+            self.source = source
+            self.filename = filename
+            self.parent = parent
+            self.folder = folder
+            self._cursor = 0
+            self._preamble = self._generate_preamble()
+            self._epilogue = f"\r\n--{self.BOUNDARY}--\r\n".encode(API.ENCODING)
+
+        def _generate_preamble(self) -> bytes:
+            """Generate the pramble (before the file) bytes"""
+            formdata = ""
+            if self.parent.token is not None:
+                formdata += '--'
+                formdata += self.BOUNDARY
+                formdata += self.FIELDS_FORMAT.format(name = "token", value = self.parent.token)
+            if self.folder is not None:
+                formdata += '--'
+                formdata += self.BOUNDARY
+                formdata += self.FIELDS_FORMAT.format(name = "folderId", value = self.folder)
+            formdata += '--'
+            formdata += self.BOUNDARY
+            formdata += self.FILE_FORMAT.format(filename = self.filename)
+            formdata += 'Content-Type: application/octet-stream\r\n\r\n'
+            return formdata.encode(API.ENCODING)
+
+        def __iter__(self):
+            yield self._preamble
+            eof = False
+            while not eof:
+                data = self.source.read(self.parent.chunk_size)
+                if len(data) < self.parent.chunk_size:
+                    eof = True
+                yield data
+            yield self._epilogue
+
+
     def upload_file(self,
-                    file_path : str | None = None,
-                    file_content : tuple[bytes, str] | None = None,
+                    file : str | os.PathLike | tuple[IO, str],
                     folder : str | Folder | None = None,
                     upload_server : str | None = None) -> UploadResult:
         """
         Upload the provided file to the chosen destination
         The file to upload can be read from a path,
-        or the binary content can be supplied directly with a filename
+        or a tuple with a file like object and a filename can be supplied
         If no gofile destination folder is provided, a new one will be created
         If no upload server is chosen, one will be selected automatically
         Without a token, the file will be uploaded anonymously to a guest account
@@ -318,56 +368,39 @@ class API:
         if folder is not None and self.token is None:
             logger.warning("Unable to use the provided folderId, token is needed")
             folder = None
-        if file_path is not None and file_content is not None:
-            logger.error("Ambiguous arguments file_path and file_content are mutually exclusive")
-            raise ValueError("Both file_path and file_content are present when only one is needed")
-        if file_path is None and file_content is None:
-            logger.error("At least one of fil_path or file_content must be given")
-            raise ValueError("At least one of fil_path or file_content must be given")
-        if file_path is not None:
-            logger.info("Reading file %s", file_path)
-            with open(file_path, 'rb') as file:
-                file_data = file.read()
-            file_name = os.path.basename(file_path)
-        else:
-            file_data, file_name = file_content
         if folder is not None and isinstance(folder, Folder):
             folder = folder.content_id
 
-        boundary = "-------PYTHON-GOFILECLI-BOUNDARY"
-
-        def generate_formdata(token : str | None,
-                              folder_id : str | None,
-                              file_data : bytes,
-                              file_name : str,
-                              boundary : str):
-            formdata = ""
-            if token is not None:
-                formdata += f'--{boundary}\r\nContent-Disposition: form-data; name="token"\r\n\r\n{token}\r\n'
-            if folder_id is not None:
-                formdata += f'--{boundary}\r\nContent-Disposition: form-data; name="folderId"\r\n\r\n{folder_id}\r\n'
-            formdata += f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{file_name}"\r\n'
-            formdata += 'Content-Type: application/octet-stream\r\n\r\n'
-            return formdata.encode(self.ENCODING) + file_data + f"\r\n--{boundary}--\r\n".encode(self.ENCODING)
-
-        body = generate_formdata(self.token, folder, file_data, file_name, boundary)
+        source = None
+        if isinstance(file, tuple):
+            filename = file[1]
+            payload = self._Formdata(file[0],
+                                     file[1],
+                                     self,
+                                     folder)
+        else:
+            filename = os.path.basename(file)
+            source = open(file, "rb")
+            payload = self._Formdata(source,
+                                     filename,
+                                     self,
+                                     folder)
 
         try:
             if upload_server is None:
                 upload_server = self.get_upload_server()
             if folder is not None:
                 logger.info("Uploading to folder %s", folder)
-            logger.info("Starting upload of %s bytes to %s",
-                        len(body),
+            logger.info("Starting upload of %s to %s",
+                        filename,
                         self.GOFILE_UPLOAD_HOST.format(server = upload_server))
             upload_connection = HTTPSConnection(self.GOFILE_UPLOAD_HOST.format(server = upload_server),
                                                 context = self._ssl_context)
             upload_connection.request('POST',
                                       '/uploadFile',
-                                      body,
+                                      payload,
                                       {'Host' : self.GOFILE_UPLOAD_HOST.format(server = upload_server),
-                                       'Content-Length' : f"{len(body)}",
-                                       'Content-Type' : f"multipart/form-data; boundary={boundary}"})
+                                       'Content-Type' : f"multipart/form-data; boundary={self._Formdata.BOUNDARY}"})
             response = upload_connection.getresponse()
             if not 200 <= response.status <= 299:
                 logger.error("HTTP error, the server replied with code %s", response.status)
@@ -393,6 +426,8 @@ class API:
         finally:
             logger.debug("Closing connection to %s",
                          self.GOFILE_UPLOAD_HOST.format(server = upload_server))
+            if source is not None:
+                source.close()
             upload_connection.close()
 
     def get_content(self, content_id : str) -> Folder:
@@ -776,7 +811,6 @@ class API:
 
 class Helper:
     """Implement higher level functions than the raw API"""
-    # TODO move exist_policy arguments to helper instance variable
     # TODO add callbacks as helper instance variables
 
     def __init__(self, api : API,
