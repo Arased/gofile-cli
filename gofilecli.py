@@ -344,7 +344,7 @@ class API:
     def __init__(self,
                  token : str | None = None,
                  ssl_context : ssl.SSLContext | None = None,
-                 chunk_size : int = 1000,
+                 chunk_size : int = 10000,
                  progress_callback : type[ProgressCallback] | None = None) -> None:
         """
         Create an API wrapper
