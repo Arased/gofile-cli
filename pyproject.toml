@@ -3,7 +3,7 @@ name = "gofilecli"
 version = "0.1.0"
 description = "Simple client for the gofile.io web API"
 authors = [
-    {name = "Thomas Hervier", email = "thomas.hervier+python@proton.me@"},
+    {name = "Thomas Hervier", email = "hervier.thomas+python@proton.me"},
 ]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,6 +11,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
+license = {text = "GPL-3.0-or-later"}
 
 [project.scripts]
 gofilecli = "gofilecli:main"
@@ -18,3 +19,8 @@ gofilecli = "gofilecli:main"
 [build-system]
 requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "gofilecli"
+]
