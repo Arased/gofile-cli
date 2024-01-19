@@ -776,13 +776,18 @@ class API:
 
 class Helper:
     """Implement higher level functions than the raw API"""
+    # TODO move exist_policy arguments to helper instance variable
+    # TODO add callbacks as helper instance variables
 
-    def __init__(self, api : API) -> None:
+    def __init__(self, api : API,
+                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE) -> None:
         self.api : API = api
         if self.api.token is None:
             logger.warning("The api object does not have a token. functionnality will be limited")
         self.account : Account = None
         self.root : Folder = None
+        self.exist_policy = exist_policy if isinstance(exist_policy, ExistPolicy)\
+            else ExistPolicy(exist_policy)
 
     def init_account(self) -> None:
         """Query the account details. API token is required"""
@@ -947,7 +952,6 @@ class Helper:
     def download(self,
                  file : File,
                  destination : str | os.PathLike,
-                 exist_policy : str | ExistPolicy = ExistPolicy.RESUME,
                  md5 : bool = True,
                  partfile : bool = False) -> None:
         """
@@ -958,12 +962,13 @@ class Helper:
         Notes for exist_policy:
         "overwrite" always overwrite and starts every download from the first byte
         "skip" always skips if the final filename is present and starts from the first byte otherwise
-        "resume" 
+        "resume" skips completed downloads and resumes partial ones, if partfiles are used, only
+            the partfile size is checked and the download is skipped entirely if the final file is
+            present
 
         Args:
             file (File): The file object to download
             destination (str | os.PathLike): Local path to destination directory
-            exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "resume".
             md5 (bool, optional): Chack the md5 sum of downloaded files. Defaults to True.
             partifle (bool, optional): Mark unfinished downloads with .part suffix. Defaults to False.
 
@@ -972,8 +977,6 @@ class Helper:
             GofileNetworkException: In case of natwork error
             OSError: If the data could not be written to the local storage
         """
-        exist_policy = exist_policy if isinstance(exist_policy, ExistPolicy) \
-            else ExistPolicy(exist_policy)
         if os.path.isfile(destination):
             logger.error("Destination %s is a file", destination)
             raise FileExistsError("Destination is a file")
@@ -982,14 +985,14 @@ class Helper:
         exist_size = 0
         # Check if should skip
         if os.path.isfile(destination) \
-            and (exist_policy == ExistPolicy.SKIP \
-                 or exist_policy == ExistPolicy.RESUME and partfile):
+            and (self.exist_policy == ExistPolicy.SKIP \
+                 or self.exist_policy == ExistPolicy.RESUME and partfile):
             logger.warning("File %s already exists, skipping", file.name)
             return
         if partfile:
             destination += ".part"
         # Check if should resume
-        if os.path.isfile(destination) and exist_policy == ExistPolicy.RESUME:
+        if os.path.isfile(destination) and self.exist_policy == ExistPolicy.RESUME:
             exist_size = os.path.getsize(destination)
             if exist_size == file.size:
                 logger.warning("File %s already exists, skipping", file.name)
@@ -1044,7 +1047,6 @@ class Helper:
     def download_folder(self,
                         folder : str | Folder,
                         destination : str | os.PathLike,
-                        exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
                         flatten : bool = False,
                         md5 : bool = False,
                         partfile : bool = False) -> None:
@@ -1054,15 +1056,12 @@ class Helper:
         Args:
             folder (str | Folder): The root folder to download
             destination (str | os.PathLike): The destination folder
-            exist_policy (str | ExistPolicy, optional): What to do in case of conflict. Defaults to "overwrite".
             flatten (bool, optional): Do not reproduce the folder structure. Defaults to False.
             md5 (bool, optional): Chack the md5 sum of downloaded files. Defaults to False.
 
         Raises:
             ValueError: If the destination is not a valid folder
         """
-        if not isinstance(exist_policy, ExistPolicy):
-            exist_policy = ExistPolicy(exist_policy)
         if os.path.isfile(destination):
             logger.error("The destination points to an already existing file")
             raise ValueError("Destination can not be a file")
@@ -1073,7 +1072,6 @@ class Helper:
         for suffix, file in to_download:
             self.download(file,
                           destination if flatten else os.path.join(destination, suffix),
-                          exist_policy,
                           md5,
                           partfile)
         logger.info("Folder %s downloaded successfully", folder.name)
@@ -1091,15 +1089,16 @@ def cli_download(args : Namespace) -> int:
         logger.error("A token is required for this operation")
         return 1
     api = API(args.token)
-    helper = Helper(api)
+    helper = Helper(api,
+                    ExistPolicy.OVERWRITE if args.overwrite else ExistPolicy.RESUME)
     logger.info("Downloading %s items", len(items))
     for item in items:
         helper.download_folder(item,
                                args.destination,
-                               ExistPolicy.RESUME if not args.overwrite else ExistPolicy.OVERWRITE,
                                args.flatten,
                                args.md5,
                                args.partfile)
+    return 0
 
 
 def main() -> int:
