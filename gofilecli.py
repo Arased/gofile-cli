@@ -898,7 +898,7 @@ class Helper:
         if size_r is not None:
             return (size_r, start if start is not None else 0)
         raise ValueError("No size could be obtained")
-    
+
     @staticmethod
     def _compute_md5(source : str | os.PathLike) -> str:
         """
@@ -965,7 +965,8 @@ class Helper:
                 size, start = self._get_size(response)
                 dest_file.seek(start)
                 logger.info("Downloading %s bytes to %s", size, file.name)
-                buffer = bytearray(size) if size < 1000000 else bytearray(1000000)
+                buffer = bytearray(size) if size < self.api.chunk_size \
+                    else bytearray(self.api.chunk_size)
                 written = 0
                 while written < size:
                     n_read = response.readinto(buffer)
