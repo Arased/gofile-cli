@@ -16,7 +16,7 @@ from http.client import HTTPSConnection, HTTPException, HTTPResponse
 from urllib import parse
 from typing import IO
 from abc import ABC, abstractmethod
-from time import perf_counter
+from time import perf_counter, sleep
 
 
 logger = logging.getLogger(__name__)
@@ -103,6 +103,17 @@ class GofileNetworkException(GofileException):
 
 class GofileAPIException(GofileException):
     """Raised when the API protocol returns an error"""
+
+class GoFileRateException(GofileAPIException):
+    """Raised when the API sends back code 429"""
+
+    def __init__(self, *args: object, delay : str | None) -> None:
+        super().__init__(*args)
+        self.delay = int(delay) if delay is not None else 30
+
+    def wait(self) -> None:
+        """Wait for the amount required by the API"""
+        sleep(self.delay)
 
 
 UploadResult = namedtuple("UploadResult",
@@ -371,6 +382,23 @@ class API:
         logger.debug("Closing connection to %s", self.GOFILE_API_HOST)
         self._api_connection.close()
 
+    def handle_http_code(self, response : HTTPResponse):
+        """
+        Throw the appropriate exception in case of error
+
+        Args:
+            response (HTTPResponse): The response from the API
+        """
+        if response.code == 429:
+            rate_limit = response.getheader("Retry-After")
+            logger.warning("API rate limit reached, retry possible in %s seconds",
+                           rate_limit if rate_limit is not None else "30")
+            raise GoFileRateException(delay = response.getheader("Retry-After"))
+        if not 200 <= response.status <= 299:
+            logger.error("HTTP error, the server replied with code %s", response.status)
+            logger.debug("Data received : %s", response.read())
+            raise GofileNetworkException(f"HTTP Error code {response.status}")
+
     def get_upload_server(self) -> str:
         """
         Ask the API for the best server available for file uploading
@@ -390,10 +418,7 @@ class API:
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json'})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -533,10 +558,7 @@ class API:
                                       {'Host' : self.GOFILE_UPLOAD_HOST.format(server = upload_server),
                                        'Content-Type' : f"multipart/form-data; boundary={self._Formdata.BOUNDARY}"})
             response = upload_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             response_data = json.loads(response.read().decode(self.ENCODING))
             logger.debug("Data received : %s", response_data)
@@ -594,10 +616,7 @@ class API:
                                          headers = {'Host' : self.GOFILE_API_HOST,
                                                     'Accept' : 'application/json'})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -686,10 +705,7 @@ class API:
                                                     'Accept' : 'application/json',
                                                     'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -759,10 +775,7 @@ class API:
                                                     'Accept' : 'application/json',
                                                     'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -812,10 +825,7 @@ class API:
                                                     'Accept' : 'application/json',
                                                     'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -863,10 +873,7 @@ class API:
                                                     'Accept' : 'application/json',
                                                     'Content-Type' : "application/json"})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -908,10 +915,7 @@ class API:
                                                     'Accept' : 'application/json',
                                                     'Content-Type' : "application/x-www-form-urlencoded"})
             response = self._api_connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.handle_http_code(response)
             logger.debug("Got response code %s", response.status)
             r_body = response.read().decode(self.ENCODING)
             r_data = json.loads(r_body)
@@ -948,7 +952,8 @@ class Helper:
     """Implement higher level functions than the raw API"""
 
     def __init__(self, api : API,
-                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE) -> None:
+                 exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
+                 rate_limit : float = 0.1) -> None:
         self.api : API = api
         if self.api.token is None:
             logger.warning("The api object does not have a token. functionnality will be limited")
@@ -956,6 +961,7 @@ class Helper:
         self.root : Folder = None
         self.exist_policy = exist_policy if isinstance(exist_policy, ExistPolicy)\
             else ExistPolicy(exist_policy)
+        self.rate_limit = rate_limit
 
     def init_account(self) -> None:
         """Query the account details. API token is required"""
@@ -990,7 +996,12 @@ class Helper:
             raise ValueError("An API token is needed for this operation")
         if folder.children is None:
             # Get the current folder children
-            folder.children = self.api.get_content(folder.content_id).children
+            try:
+                folder.children = self.api.get_content(folder.content_id).children
+                sleep(self.rate_limit)
+            except GoFileRateException as rate_limit:
+                rate_limit.wait()
+                folder.children = self.api.get_content(folder.content_id).children
         if len(folder.children) == 0:
             return # Nothing to do
         for child in folder.children:
@@ -1091,10 +1102,7 @@ class Helper:
                                 parse.urlparse(file.link).path,
                                 headers = headers)
             response = connection.getresponse()
-            if not 200 <= response.status <= 299:
-                logger.error("HTTP error, the server replied with code %s", response.status)
-                logger.debug("Data received : %s", response.read())
-                raise GofileNetworkException(f"HTTP Error code {response.status}")
+            self.api.handle_http_code(response)
             with open(destination, "ab") as dest_file:
                 size, start = self._get_size(response)
                 dest_file.seek(start)
@@ -1248,10 +1256,18 @@ class Helper:
             folder = self.api.get_content(folder)
         to_download = self.traverse_hierarchy(folder, folder.name)
         for suffix, file in to_download:
-            self.download(file,
-                          destination if flatten else os.path.join(destination, suffix),
-                          md5,
-                          partfile)
+            try:
+                self.download(file,
+                              destination if flatten else os.path.join(destination, suffix),
+                              md5,
+                              partfile)
+                sleep(self.rate_limit)
+            except GoFileRateException as rate_limit:
+                rate_limit.wait()
+                self.download(file,
+                              destination if flatten else os.path.join(destination, suffix),
+                              md5,
+                              partfile)
         logger.info("Folder %s downloaded successfully", folder.name)
 
 
@@ -1278,11 +1294,20 @@ def cli_download(args : Namespace) -> int:
                     ExistPolicy.OVERWRITE if args.overwrite else ExistPolicy.RESUME)
     logger.info("Downloading %s items", len(items))
     for item in items:
-        helper.download_folder(item,
-                               args.destination,
-                               args.flatten,
-                               args.md5,
-                               args.partfile)
+        try:
+            helper.download_folder(item,
+                                   args.destination,
+                                   args.flatten,
+                                   args.md5,
+                                   args.partfile)
+            sleep(helper.rate_limit)
+        except GoFileRateException as rate_limit:
+            rate_limit.wait()
+            helper.download_folder(item,
+                                   args.destination,
+                                   args.flatten,
+                                   args.md5,
+                                   args.partfile)
     return 0
 
 
