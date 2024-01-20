@@ -405,6 +405,7 @@ class API:
             rate_limit = response.getheader("Retry-After")
             logger.warning("API rate limit reached, retry possible in %s seconds",
                            rate_limit if rate_limit is not None else "30")
+            logger.debug("Data received : %s", response.read())
             raise GoFileRateException(delay = response.getheader("Retry-After"))
         if not 200 <= response.status <= 299:
             logger.error("HTTP error, the server replied with code %s", response.status)
