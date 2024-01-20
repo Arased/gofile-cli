@@ -95,16 +95,22 @@ def parse_url(url_candidate : str) -> str | None:
     return match.group("content_code")
 
 
-class GofileException(Exception):
+class GoFileException(Exception):
     """Raised by the modules components"""
 
-class GofileNetworkException(GofileException):
+class GoFileNetworkException(GoFileException):
     """Raised when a network error occurs"""
 
-class GofileAPIException(GofileException):
+class GoFileAPIException(GoFileException):
     """Raised when the API protocol returns an error"""
 
-class GoFileRateException(GofileAPIException):
+class GoFileNotAFolderException(GoFileAPIException):
+    """Raised when calling get_content on a file content id"""
+
+class GoFileFolderNotFoundException(GoFileAPIException):
+    """Raised when get_content does not yield any result"""
+
+class GoFileRateException(GoFileAPIException):
     """Raised when the API sends back code 429"""
 
     def __init__(self, *args: object, delay : str | None) -> None:
@@ -275,7 +281,7 @@ class ProgressPrinter(ProgressCallback):
 
     def __init__(self, total : int | None = None) -> None:
         self.total = total
-        self._counter = None
+        self._start = None
         self._fraction_amount = 0
 
     def _format_total(self) -> str:
@@ -312,13 +318,13 @@ class ProgressPrinter(ProgressCallback):
             step_size (int): Amount of bytes processed since last call
             prefix (str): Message to be printed before stats
         """
-        if self._counter is None:
-            self._counter = perf_counter()
+        if self._start is None:
+            self._start = perf_counter()
             return
-        elapsed_time = perf_counter() - self._counter
+        elapsed_time = perf_counter() - self._start
         self._fraction_amount += step_size
         print("\x1b[36;20m" + message,
-              self._format_rate(step_size / elapsed_time),
+              self._format_rate(self._fraction_amount / elapsed_time),
               self._compute_percentage() + "%",
               "out of",
               self._format_total(),
@@ -326,7 +332,6 @@ class ProgressPrinter(ProgressCallback):
               sep = ' ',
               end = '\r',
               flush = True)
-        self._counter = perf_counter()
 
     def end(self, message : str) -> None:
         """
@@ -337,7 +342,7 @@ class ProgressPrinter(ProgressCallback):
         """
         width = len(message) + 36
         print(f"\x1b[32;20m{message:{width}}\x1b[0m")
-        self._counter = None
+        self._start = None
         self._fraction_amount = 0
 
     def skip(self, amount: int) -> None:
@@ -397,7 +402,7 @@ class API:
         if not 200 <= response.status <= 299:
             logger.error("HTTP error, the server replied with code %s", response.status)
             logger.debug("Data received : %s", response.read())
-            raise GofileNetworkException(f"HTTP Error code {response.status}")
+            raise GoFileNetworkException(f"HTTP Error code {response.status}")
 
     def get_upload_server(self) -> str:
         """
@@ -425,13 +430,13 @@ class API:
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 return r_data['data']['server']
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -573,13 +578,13 @@ class API:
                                     response_data['data']['fileName'],
                                     response_data['data']['md5'],
                                     response_data['data']['parentFolder'])
-            raise GofileAPIException(f"API status not ok : {response_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {response_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             logger.debug("Closing connection to %s",
                          self.GOFILE_UPLOAD_HOST.format(server = upload_server))
@@ -623,7 +628,7 @@ class API:
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 if r_data['data'] == 'not-a-folder':
-                    raise GofileAPIException(f"Content ID {content_id} is not a folder")
+                    raise GoFileNotAFolderException(f"Content ID {content_id} is not a folder")
                 if r_data['data']['type'] == ContentType.FOLDER.value:
                     children = []
                     for child in [r_data['data']['contents'][child_id]
@@ -650,7 +655,7 @@ class API:
                                                  mime_type = child['mimetype'],
                                                  server = child['serverChoosen']))
                         else:
-                            raise GofileAPIException(f"Content type not known {child['type']}")
+                            raise GoFileAPIException(f"Content type not known {child['type']}")
                     return Folder(content_id = r_data['data']['id'],
                                   name = r_data['data']['name'],
                                   parent = r_data['data'].get('parentFolder', None),
@@ -660,14 +665,17 @@ class API:
                                   is_public = r_data['data']['public'],
                                   code = r_data['data']['code'],
                                   children = children)
-                raise GofileAPIException(f"Content type not known {r_data['data']['type']}")
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+                raise GoFileAPIException(f"Content type not known {r_data['data']['type']}")
+            elif r_data['status'] == "error-notFound":
+                logger.error("The folder %s does not exist or has been deleted", content_id)
+                raise GoFileFolderNotFoundException(f"Folder {content_id} does not exist")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -719,13 +727,13 @@ class API:
                               is_public = False, # Default setting
                               code = r_data['data']['code'],
                               children = r_data['data']['childs'])
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -782,13 +790,13 @@ class API:
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 return
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -832,13 +840,13 @@ class API:
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 return
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -880,13 +888,13 @@ class API:
             logger.debug("Data received : %s", r_data)
             if r_data['status'] == 'ok':
                 return r_data['data']
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -937,13 +945,13 @@ class API:
                                total_30ddl_traffic_limit = r_data['data']['total30DDLTrafficLimit'],
                                total_size = r_data['data']['totalSize'],
                                total_size_limit = r_data['data']['totalSizeLimit'])
-            raise GofileAPIException(f"API status not ok : {r_data['status']}")
+            raise GoFileAPIException(f"API status not ok : {r_data['status']}")
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as decode_error:
             logger.error("API error, the response message could not be decoded, %s", decode_error)
-            raise GofileAPIException() from decode_error
+            raise GoFileAPIException() from decode_error
         finally:
             self.close()
 
@@ -1125,7 +1133,7 @@ class Helper:
                         buffer = bytearray(size - written)
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
-            raise GofileNetworkException() from network_error
+            raise GoFileNetworkException() from network_error
         finally:
             logger.debug("Closing connection to %s", host)
             connection.close()
@@ -1187,7 +1195,7 @@ class Helper:
             if md5_hash != file.md5:
                 logger.error("MD5 hash not equal")
                 logger.debug("%s != %s", file.md5, md5_hash)
-                raise GofileException("MD5 hash not equal")
+                raise GoFileException("MD5 hash not equal")
         if partfile:
             os.rename(destination, destination.removesuffix(".part"))
         if self.api.callback is not None:
@@ -1308,6 +1316,8 @@ def cli_download(args : Namespace) -> int:
                                    args.flatten,
                                    args.md5,
                                    args.partfile)
+        except GoFileFolderNotFoundException:
+            return 1
     return 0
 
 
