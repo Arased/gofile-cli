@@ -309,6 +309,14 @@ class ProgressPrinter(ProgressCallback):
     def _compute_percentage(self):
         return str(int(self._fraction_amount / self.total * 100))
 
+    @staticmethod
+    def _trim_message(message : str, reserved : int = 0) -> str:
+        message_size, max_size = len(message), os.get_terminal_size().columns - reserved
+        if message_size > max_size:
+            remove = message_size - max_size
+            message = f"{message[:(message_size // 2 - remove // 2)]}...{message[(message_size // 2 + remove // 2) + 3:]}"
+        return message
+
     def step(self, step_size : int, message :str) -> None:
         """
         Update and print the stats
@@ -323,13 +331,11 @@ class ProgressPrinter(ProgressCallback):
             return
         elapsed_time = perf_counter() - self._start
         self._fraction_amount += step_size
-        print("\x1b[36;20m" + message,
-              self._format_rate(self._fraction_amount / elapsed_time),
-              self._compute_percentage() + "%",
-              "out of",
-              self._format_total(),
+        message = self._trim_message(message, 36)
+        print("\x1b[36;20m",
+              f"{message} {self._format_rate(self._fraction_amount / elapsed_time)} {self._compute_percentage()}% out of {self._format_total()}",
               "\x1b[0m",
-              sep = ' ',
+              sep = "",
               end = '\r',
               flush = True)
 
@@ -340,6 +346,7 @@ class ProgressPrinter(ProgressCallback):
         Args:
             message (str): _description_
         """
+        message = self._trim_message(message)
         width = len(message) + 36
         print(f"\x1b[32;20m{message:{width}}\x1b[0m")
         self._start = None
@@ -1377,7 +1384,11 @@ def main() -> int:
     _init_logger(args.verbose)
 
     # Call the handler function for the selected subcommand
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        logger.error("Interrupted by user")
+        return 2
 
 
 if __name__ == "__main__":
