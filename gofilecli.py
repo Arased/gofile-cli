@@ -1191,13 +1191,14 @@ class Helper:
         # Check if should resume
         if os.path.isfile(destination) and self.exist_policy == ExistPolicy.RESUME:
             exist_size = os.path.getsize(destination)
-            if exist_size == file.size:
-                logger.warning("File %s already exists, skipping", file.name)
-                return
-            logger.warning("File %s already exists, resuming from byte %s", file.name, exist_size)
+            if exist_size != file.size:
+                logger.warning("File %s already exists, resuming from byte %s", file.name, exist_size)
         if self.api.callback_class is not None:
             self.api.callback = self.api.callback_class(file.size)
-        self._download(file, destination, exist_size)
+        if exist_size != file.size:
+            self._download(file, destination, exist_size)
+        elif partfile:
+            logger.warning("Pertfile is complete, resuming cleanup")
         if md5:
             md5_hash = self._compute_md5(destination)
             if md5_hash != file.md5:
