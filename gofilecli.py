@@ -969,7 +969,7 @@ class Helper:
 
     def __init__(self, api : API,
                  exist_policy : str | ExistPolicy = ExistPolicy.OVERWRITE,
-                 rate_limit : float = 0.1) -> None:
+                 rate_limit : float = 0.25) -> None:
         self.api : API = api
         if self.api.token is None:
             logger.warning("The api object does not have a token. functionnality will be limited")
