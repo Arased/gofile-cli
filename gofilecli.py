@@ -110,6 +110,13 @@ class GoFileNotAFolderException(GoFileAPIException):
 class GoFileFolderNotFoundException(GoFileAPIException):
     """Raised when get_content does not yield any result"""
 
+class GoFileRedirectException(GoFileAPIException):
+    """Raised when redirected"""
+
+    def __init__(self, *args: object, location : str) -> None:
+        super().__init__(*args)
+        self.location = location
+
 class GoFileRateException(GoFileAPIException):
     """Raised when the API sends back code 429"""
 
@@ -407,6 +414,13 @@ class API:
                            rate_limit if rate_limit is not None else "30")
             logger.debug("Data received : %s", response.read())
             raise GoFileRateException(delay = response.getheader("Retry-After"))
+        if response.code == 302:
+            new_link = response.getheader("Location")
+            if new_link is not None:
+                logger.info("Got redirect to %s, following", new_link)
+                raise GoFileRedirectException("Redirected by response code 302",
+                                              location = new_link)
+            raise GoFileAPIException("Received redirect but no Location header was found")
         if not 200 <= response.status <= 299:
             logger.error("HTTP error, the server replied with code %s", response.status)
             logger.debug("Data received : %s", response.read())
@@ -1139,11 +1153,23 @@ class Helper:
                     written += n_written
                     if 0 < size - written < len(buffer):
                         buffer = bytearray(size - written)
+        except GoFileRedirectException as redirect:
+            new_file = File(file.content_id,
+                            file.name,
+                            file.parent,
+                            file.create_time,
+                            file.download_count,
+                            file.size,
+                            redirect.location,
+                            file.md5,
+                            file.mime_type,
+                            file.server)
+            self._download(new_file, destination, exist_size)
         except (HTTPException, ConnectionError, TimeoutError) as network_error:
             logger.error("Network error, %s", network_error)
             raise GoFileNetworkException() from network_error
         finally:
-            logger.debug("Closing connection to %s", host)
+            logger.debug("\nClosing connection to %s", host)
             connection.close()
 
     def download(self,
