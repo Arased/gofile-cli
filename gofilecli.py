@@ -688,7 +688,7 @@ class API:
                                   code = r_data['data']['code'],
                                   children = children)
                 raise GoFileAPIException(f"Content type not known {r_data['data']['type']}")
-            elif r_data['status'] == "error-notFound":
+            if r_data['status'] == "error-notFound":
                 logger.error("The folder %s does not exist or has been deleted", content_id)
                 raise GoFileFolderNotFoundException(f"Folder {content_id} does not exist")
             raise GoFileAPIException(f"API status not ok : {r_data['status']}")
